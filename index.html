@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HT Stock — Prepared Food Waste Tracker</title>
+<style>
+  :root {
+    --bg: #f4f5f2;
+    --card: #ffffff;
+    --text: #1c2420;
+    --muted: #5f6b64;
+    --accent: #1e7a46;
+    --accent-soft: #e3f1e9;
+    --border: #d8ded9;
+    --danger: #b3372e;
+    --danger-soft: #f9e9e7;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141815;
+      --card: #1d231f;
+      --text: #e8ece9;
+      --muted: #9aa69e;
+      --accent: #4cb87a;
+      --accent-soft: #21332a;
+      --border: #313a34;
+      --danger: #e0685f;
+      --danger-soft: #3a2523;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding-bottom: 84px; /* room for bottom nav */
+  }
+  header {
+    padding: 14px 16px 10px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  header h1 { font-size: 20px; margin: 0; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  main { padding: 0 12px; max-width: 760px; margin: 0 auto; }
+  section[hidden] { display: none !important; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 10px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  input[type="text"], input[type="number"], input[type="date"], select, textarea {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  textarea { resize: vertical; }
+
+  /* Item picker grid */
+  .item-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+  }
+  .item-btn {
+    border: 1.5px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 8px;
+    text-align: left;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1.3;
+  }
+  .item-btn .price { display: block; color: var(--muted); font-size: 12.5px; }
+  .item-btn.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .qty-row { display: flex; gap: 8px; align-items: center; }
+  .qty-row input { text-align: center; font-size: 20px; flex: 1; }
+  .stepper {
+    width: 52px; height: 46px;
+    font-size: 22px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .btn {
+    display: inline-block;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 18px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn.block { width: 100%; margin-top: 14px; }
+  .btn.secondary {
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    font-weight: 500;
+  }
+  .btn.danger { background: var(--danger); }
+  .btn.small { padding: 7px 12px; font-size: 14px; }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+  .entry-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14.5px;
+  }
+  .entry-row:last-child { border-bottom: none; }
+  .entry-row .meta { color: var(--muted); font-size: 12.5px; }
+  .entry-del {
+    border: none;
+    background: var(--danger-soft);
+    color: var(--danger);
+    border-radius: 7px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .day-head {
+    display: flex;
+    justify-content: space-between;
+    font-weight: 600;
+    font-size: 14px;
+    margin: 14px 0 4px;
+  }
+  .day-head:first-child { margin-top: 0; }
+
+  /* Stats */
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .stat .v { font-size: 21px; font-weight: 700; }
+  .stat .l { font-size: 12px; color: var(--muted); }
+  .stat.big { grid-column: 1 / -1; }
+  .stat.big .v { color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+  td.num, th.num { text-align: right; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: 13px; }
+  .bar-row .lbl { width: 38px; color: var(--muted); }
+  .bar-row .bar-wrap { flex: 1; background: var(--bg); border-radius: 6px; overflow: hidden; }
+  .bar-row .bar { height: 18px; background: var(--accent); border-radius: 6px; min-width: 2px; }
+  .bar-row .val { width: 70px; text-align: right; }
+  .warn {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13.5px;
+    margin-bottom: 10px;
+  }
+  .empty { color: var(--muted); text-align: center; padding: 26px 10px; font-size: 14.5px; }
+
+  pre#pitch-output {
+    white-space: pre-wrap;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+  }
+
+  /* Items setup */
+  .item-edit {
+    display: grid;
+    grid-template-columns: 1fr 110px 84px 40px;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .item-edit input, .item-edit select { padding: 8px; font-size: 14px; }
+  .item-edit .del {
+    border: none; background: none; color: var(--danger);
+    font-size: 18px; cursor: pointer;
+  }
+
+  /* Bottom nav */
+  nav#tabs {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    display: flex;
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  nav#tabs button {
+    flex: 1;
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-size: 12.5px;
+    padding: 9px 2px 11px;
+    cursor: pointer;
+  }
+  nav#tabs button .ico { display: block; font-size: 20px; margin-bottom: 1px; }
+  nav#tabs button.active { color: var(--accent); font-weight: 600; }
+
+  #toast {
+    position: fixed;
+    left: 50%; bottom: 96px;
+    transform: translateX(-50%);
+    background: var(--text);
+    color: var(--bg);
+    padding: 9px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s;
+    max-width: 90vw;
+  }
+  #toast.show { opacity: 1; }
+
+  @media print {
+    body * { visibility: hidden; }
+    #pitch-output, #pitch-output * { visibility: visible; }
+    #pitch-output { position: absolute; top: 0; left: 0; width: 100%; border: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>HT Stock</h1>
+  <span class="sub">prepared food waste tracker</span>
+</header>
+
+<main>
+
+  <!-- ============ LOG ============ -->
+  <section id="view-log">
+    <div class="card">
+      <h2>Log discarded items</h2>
+      <label for="log-date">Date</label>
+      <input type="date" id="log-date">
+      <label>Item</label>
+      <div class="item-grid" id="log-item-grid"></div>
+      <p class="hint">Set your store's real prices in Setup — the dollar totals are only as good as the prices behind them.</p>
+      <label for="log-qty">Quantity (decimals OK for per-lb items)</label>
+      <div class="qty-row">
+        <button class="stepper" id="qty-minus" type="button">−</button>
+        <input type="number" id="log-qty" value="1" min="0" step="any" inputmode="decimal">
+        <button class="stepper" id="qty-plus" type="button">+</button>
+      </div>
+      <label for="log-reason">Reason</label>
+      <select id="log-reason">
+        <option>End of day</option>
+        <option>Past date / expired</option>
+        <option>Damaged</option>
+        <option>Quality</option>
+        <option>Overproduction</option>
+        <option>Other</option>
+      </select>
+      <label for="log-note">Note (optional)</label>
+      <input type="text" id="log-note" placeholder="e.g. rained all day, slow dinner rush">
+      <button class="btn block" id="log-save">Log waste</button>
+    </div>
+    <div class="card">
+      <h2 id="today-title">Logged today</h2>
+      <div id="today-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ HISTORY ============ -->
+  <section id="view-history" hidden>
+    <div class="card">
+      <h2>All entries</h2>
+      <div id="history-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ STATS ============ -->
+  <section id="view-stats" hidden>
+    <div id="stats-content"></div>
+  </section>
+
+  <!-- ============ PITCH ============ -->
+  <section id="view-pitch" hidden>
+    <div class="card">
+      <h2>Pitch numbers</h2>
+      <p class="hint" style="margin-top:0">Auto-generated from your log, framed the way a P&amp;L owner reads it: baseline dollars, annualized, and a realistic 10–20% recovery range. Aim for 14+ days of logging before you use this.</p>
+      <label for="pitch-store">Store label (optional, e.g. "Store #241")</label>
+      <input type="text" id="pitch-store" placeholder="Store #">
+      <label for="pitch-stores">Stores in district (for extrapolation)</label>
+      <input type="number" id="pitch-stores" value="20" min="1" step="1">
+      <div class="btn-row">
+        <button class="btn small" id="pitch-copy">Copy summary</button>
+        <button class="btn small secondary" id="pitch-print">Print one-pager</button>
+      </div>
+    </div>
+    <div class="card">
+      <pre id="pitch-output"></pre>
+    </div>
+  </section>
+
+  <!-- ============ SETUP ============ -->
+  <section id="view-setup" hidden>
+    <div class="card">
+      <h2>Items &amp; prices</h2>
+      <p class="hint" style="margin-top:0">Use full retail price per unit. Deleting an item never touches entries already logged.</p>
+      <div id="items-list"></div>
+      <button class="btn small secondary" id="item-add">+ Add item</button>
+    </div>
+    <div class="card">
+      <h2>Your data</h2>
+      <p class="hint" style="margin-top:0">Everything lives only in this browser on this device. Back it up — a cleared browser means a lost baseline.</p>
+      <div class="btn-row">
+        <button class="btn small secondary" id="export-csv">Download CSV</button>
+        <button class="btn small secondary" id="copy-csv">Copy CSV</button>
+        <button class="btn small secondary" id="export-json">Download backup</button>
+        <button class="btn small secondary" id="copy-json">Copy backup</button>
+      </div>
+      <label for="restore-text">Restore from backup (paste JSON, or use the file picker)</label>
+      <textarea id="restore-text" rows="3" placeholder='{"items":[...],"logs":[...]}'></textarea>
+      <div class="btn-row">
+        <button class="btn small secondary" id="restore-paste">Restore pasted</button>
+        <input type="file" id="restore-file" accept=".json,application/json" style="display:none">
+        <button class="btn small secondary" id="restore-pick">Restore from file…</button>
+        <button class="btn small danger" id="wipe-all">Erase everything</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>About</h2>
+      <p class="hint" style="margin-top:0">
+        Phase 1 of a waste-reduction pilot: document the baseline. Log what you personally see discarded —
+        this tool is your digital clipboard, not a company system. Get written permission before pulling
+        any company sales or inventory data into anything.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<nav id="tabs">
+  <button data-view="log" class="active"><span class="ico">📝</span>Log</button>
+  <button data-view="history"><span class="ico">📅</span>History</button>
+  <button data-view="stats"><span class="ico">📊</span>Stats</button>
+  <button data-view="pitch"><span class="ico">💬</span>Pitch</button>
+  <button data-view="setup"><span class="ico">⚙️</span>Setup</button>
+</nav>
+
+<div id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var LS = { items: 'htw.items.v1', logs: 'htw.logs.v1', settings: 'htw.settings.v1' };
+
+  var DEFAULT_ITEMS = [
+    { id: 'pizza-whole', name: 'Whole Pizza',        dept: 'Pizza',       price: 7.99 },
+    { id: 'pizza-slice', name: 'Pizza Slice',        dept: 'Pizza',       price: 3.49 },
+    { id: 'doughnut',    name: 'Doughnut',           dept: 'Bakery',      price: 1.19 },
+    { id: 'cake',        name: 'Cake',               dept: 'Bakery',      price: 12.99 },
+    { id: 'bread',       name: 'Bread Loaf',         dept: 'Bakery',      price: 3.99 },
+    { id: 'rotisserie',  name: 'Rotisserie Chicken', dept: 'Hot Foods',   price: 7.99 },
+    { id: 'hotbar-lb',   name: 'Hot Bar (per lb)',   dept: 'Hot Foods',   price: 9.99 },
+    { id: 'sushi',       name: 'Sushi Roll',         dept: 'Fresh Foods', price: 8.99 },
+    { id: 'sub',         name: 'Sub / Sandwich',     dept: 'Fresh Foods', price: 5.99 }
+  ];
+  var DEPTS = ['Bakery', 'Pizza', 'Hot Foods', 'Fresh Foods', 'Deli', 'Other'];
+
+  function load(key, fallback) {
+    try {
+      var v = localStorage.getItem(key);
+      return v ? JSON.parse(v) : fallback;
+    } catch (e) { return fallback; }
+  }
+  function persist(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {}
+  }
+
+  var items = load(LS.items, null);
+  if (!items) { items = DEFAULT_ITEMS.slice(); persist(LS.items, items); }
+  var logs = load(LS.logs, []);
+  var settings = load(LS.settings, { storeName: '', stores: 20 });
+
+  var selectedItemId = null;
+
+  function $(id) { return document.getElementById(id); }
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function todayISO() {
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function nowHM() {
+    var d = new Date();
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+  function usd(n) {
+    return n.toLocaleString(undefined, { style: 'currency', currency: 'USD' });
+  }
+  function usd0(n) {
+    return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  }
+  function fmtDate(iso) {
+    return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  function fmtDateLong(iso) {
+    return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  var toastTimer = null;
+  function toast(msg) {
+    var t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 1800);
+  }
+
+  /* ---------- tabs ---------- */
+  var views = ['log', 'history', 'stats', 'pitch', 'setup'];
+  document.querySelectorAll('#tabs button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var v = btn.dataset.view;
+      views.forEach(function (name) { $('view-' + name).hidden = (name !== v); });
+      document.querySelectorAll('#tabs button').forEach(function (b) { b.classList.toggle('active', b === btn); });
+      if (v === 'log') renderLog();
+      if (v === 'history') renderHistory();
+      if (v === 'stats') renderStats();
+      if (v === 'pitch') renderPitch();
+      if (v === 'setup') renderItems();
+    });
+  });
+
+  /* ---------- log tab ---------- */
+  function renderItemGrid() {
+    var grid = $('log-item-grid');
+    grid.innerHTML = '';
+    if (!items.length) {
+      grid.innerHTML = '<p class="hint">No items yet — add some in Setup.</p>';
+      return;
+    }
+    items.forEach(function (it) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'item-btn' + (it.id === selectedItemId ? ' selected' : '');
+      b.innerHTML = esc(it.name) + '<span class="price">' + esc(it.dept) + ' · ' + usd(it.price) + '</span>';
+      b.addEventListener('click', function () {
+        selectedItemId = it.id;
+        renderItemGrid();
+      });
+      grid.appendChild(b);
+    });
+  }
+
+  function renderTodayList() {
+    var date = $('log-date').value || todayISO();
+    var dayLogs = logs.filter(function (l) { return l.date === date; });
+    $('today-title').textContent = (date === todayISO() ? 'Logged today' : 'Logged ' + fmtDate(date));
+    var box = $('today-list');
+    if (!dayLogs.length) {
+      box.innerHTML = '<div class="empty">Nothing logged for this day yet.</div>';
+      return;
+    }
+    var total = dayLogs.reduce(function (s, l) { return s + l.qty * l.price; }, 0);
+    var html = '';
+    dayLogs.slice().reverse().forEach(function (l) {
+      html += '<div class="entry-row"><div>' +
+        '<div>' + esc(l.itemName) + ' × ' + l.qty + ' — <strong>' + usd(l.qty * l.price) + '</strong></div>' +
+        '<div class="meta">' + esc(l.reason) + (l.note ? ' · ' + esc(l.note) : '') + ' · ' + esc(l.time) + '</div>' +
+        '</div><button class="entry-del" data-id="' + l.id + '">Delete</button></div>';
+    });
+    html += '<div class="entry-row"><strong>Day total</strong><strong>' + usd(total) + '</strong></div>';
+    box.innerHTML = html;
+    box.querySelectorAll('.entry-del').forEach(function (b) {
+      b.addEventListener('click', function () { deleteLog(b.dataset.id, renderTodayList); });
+    });
+  }
+
+  function deleteLog(id, rerender) {
+    var l = logs.find(function (x) { return x.id === id; });
+    if (!l) return;
+    if (!confirm('Delete ' + l.itemName + ' × ' + l.qty + ' (' + fmtDate(l.date) + ')?')) return;
+    logs = logs.filter(function (x) { return x.id !== id; });
+    persist(LS.logs, logs);
+    rerender();
+  }
+
+  function renderLog() {
+    if (!$('log-date').value) $('log-date').value = todayISO();
+    renderItemGrid();
+    renderTodayList();
+  }
+
+  $('log-date').addEventListener('change', renderTodayList);
+  $('qty-minus').addEventListener('click', function () {
+    var q = parseFloat($('log-qty').value) || 0;
+    $('log-qty').value = Math.max(0, Math.round((q - 1) * 100) / 100);
+  });
+  $('qty-plus').addEventListener('click', function () {
+    var q = parseFloat($('log-qty').value) || 0;
+    $('log-qty').value = Math.round((q + 1) * 100) / 100;
+  });
+
+  $('log-save').addEventListener('click', function () {
+    var it = items.find(function (x) { return x.id === selectedItemId; });
+    if (!it) { toast('Pick an item first'); return; }
+    var qty = parseFloat($('log-qty').value);
+    if (!(qty > 0)) { toast('Quantity must be more than 0'); return; }
+    var entry = {
+      id: uid(),
+      date: $('log-date').value || todayISO(),
+      time: nowHM(),
+      itemId: it.id,
+      itemName: it.name,
+      dept: it.dept,
+      qty: qty,
+      price: it.price,
+      reason: $('log-reason').value,
+      note: $('log-note').value.trim()
+    };
+    logs.push(entry);
+    persist(LS.logs, logs);
+    $('log-qty').value = 1;
+    $('log-note').value = '';
+    toast('Logged: ' + it.name + ' × ' + qty + ' (' + usd(qty * it.price) + ')');
+    renderTodayList();
+  });
+
+  /* ---------- history ---------- */
+  function renderHistory() {
+    var box = $('history-list');
+    if (!logs.length) {
+      box.innerHTML = '<div class="empty">No entries yet. Start on the Log tab.</div>';
+      return;
+    }
+    var byDate = {};
+    logs.forEach(function (l) { (byDate[l.date] = byDate[l.date] || []).push(l); });
+    var dates = Object.keys(byDate).sort().reverse();
+    var html = '';
+    dates.forEach(function (d) {
+      var dayLogs = byDate[d];
+      var total = dayLogs.reduce(function (s, l) { return s + l.qty * l.price; }, 0);
+      html += '<div class="day-head"><span>' + fmtDate(d) + '</span><span>' + usd(total) + '</span></div>';
+      dayLogs.forEach(function (l) {
+        html += '<div class="entry-row"><div>' +
+          '<div>' + esc(l.itemName) + ' × ' + l.qty + ' — ' + usd(l.qty * l.price) + '</div>' +
+          '<div class="meta">' + esc(l.reason) + (l.note ? ' · ' + esc(l.note) : '') + '</div>' +
+          '</div><button class="entry-del" data-id="' + l.id + '">Delete</button></div>';
+      });
+    });
+    box.innerHTML = html;
+    box.querySelectorAll('.entry-del').forEach(function (b) {
+      b.addEventListener('click', function () { deleteLog(b.dataset.id, renderHistory); });
+    });
+  }
+
+  /* ---------- stats ---------- */
+  function computeStats() {
+    if (!logs.length) return null;
+    var dates = logs.map(function (l) { return l.date; }).sort();
+    var first = dates[0], last = dates[dates.length - 1];
+    var spanDays = Math.round((Date.parse(last + 'T00:00:00Z') - Date.parse(first + 'T00:00:00Z')) / 86400000) + 1;
+    var uniqueDays = {};
+    dates.forEach(function (d) { uniqueDays[d] = 1; });
+    var total = 0, units = 0;
+    var byItem = {}, byDept = {}, byDow = [0, 0, 0, 0, 0, 0, 0];
+    logs.forEach(function (l) {
+      var v = l.qty * l.price;
+      total += v; units += l.qty;
+      var bi = byItem[l.itemName] = byItem[l.itemName] || { qty: 0, val: 0 };
+      bi.qty += l.qty; bi.val += v;
+      byDept[l.dept] = (byDept[l.dept] || 0) + v;
+      byDow[new Date(l.date + 'T00:00:00').getDay()] += v;
+    });
+    var weekly = total / spanDays * 7;
+    return {
+      first: first, last: last,
+      spanDays: spanDays,
+      daysWithEntries: Object.keys(uniqueDays).length,
+      total: total, units: units,
+      weekly: weekly,
+      annual: weekly * 52,
+      byItem: byItem, byDept: byDept, byDow: byDow
+    };
+  }
+
+  function renderStats() {
+    var box = $('stats-content');
+    var s = computeStats();
+    if (!s) {
+      box.innerHTML = '<div class="card"><div class="empty">No data yet — log a few days of waste and your baseline shows up here.</div></div>';
+      return;
+    }
+    var html = '';
+    if (s.spanDays < 14) {
+      html += '<div class="warn">Only ' + s.spanDays + ' day' + (s.spanDays === 1 ? '' : 's') +
+        ' of coverage so far — aim for at least 14 for a credible baseline before pitching.</div>';
+    }
+    html += '<div class="card"><h2>Baseline · ' + fmtDate(s.first) + ' – ' + fmtDate(s.last) + '</h2>' +
+      '<div class="stat-grid">' +
+      '<div class="stat"><div class="v">' + usd(s.total) + '</div><div class="l">documented waste</div></div>' +
+      '<div class="stat"><div class="v">' + (Math.round(s.units * 100) / 100) + '</div><div class="l">units tossed</div></div>' +
+      '<div class="stat"><div class="v">' + usd(s.weekly) + '</div><div class="l">weekly run rate</div></div>' +
+      '<div class="stat"><div class="v">' + s.spanDays + ' d</div><div class="l">coverage (' + s.daysWithEntries + ' with entries)</div></div>' +
+      '<div class="stat big"><div class="v">' + usd0(s.annual) + '</div><div class="l">annualized waste at this store (weekly × 52; seasonal swings not modeled)</div></div>' +
+      '</div></div>';
+
+    html += '<div class="card"><h2>If a prediction system recovers…</h2><table><tbody>' +
+      [['10% (conservative)', 0.10], ['15% (central)', 0.15], ['20% (optimistic)', 0.20]].map(function (r) {
+        return '<tr><td>' + r[0] + '</td><td class="num"><strong>' + usd0(s.annual * r[1]) + '/yr</strong></td></tr>';
+      }).join('') +
+      '</tbody></table><p class="hint">Retail perishable pilots typically land in the 10–20% range in year one. Pitch the middle, not the top.</p></div>';
+
+    var itemRows = Object.keys(s.byItem).map(function (name) {
+      return { name: name, qty: s.byItem[name].qty, val: s.byItem[name].val };
+    }).sort(function (a, b) { return b.val - a.val; });
+    html += '<div class="card"><h2>By item</h2><table><thead><tr><th>Item</th><th class="num">Units</th><th class="num">Value</th></tr></thead><tbody>' +
+      itemRows.map(function (r) {
+        return '<tr><td>' + esc(r.name) + '</td><td class="num">' + (Math.round(r.qty * 100) / 100) + '</td><td class="num">' + usd(r.val) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+
+    var deptRows = Object.keys(s.byDept).map(function (d) { return { d: d, v: s.byDept[d] }; })
+      .sort(function (a, b) { return b.v - a.v; });
+    html += '<div class="card"><h2>By department</h2><table><tbody>' +
+      deptRows.map(function (r) {
+        return '<tr><td>' + esc(r.d) + '</td><td class="num">' + usd(r.v) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+
+    var dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    var maxDow = Math.max.apply(null, s.byDow) || 1;
+    html += '<div class="card"><h2>By day of week</h2>' +
+      s.byDow.map(function (v, i) {
+        return '<div class="bar-row"><span class="lbl">' + dowNames[i] + '</span>' +
+          '<span class="bar-wrap"><span class="bar" style="width:' + (v / maxDow * 100) + '%"></span></span>' +
+          '<span class="val">' + usd(v) + '</span></div>';
+      }).join('') +
+      '<p class="hint">This pattern is what a prediction model would exploit — it is also your evidence that waste is systematic, not random.</p></div>';
+
+    box.innerHTML = html;
+  }
+
+  /* ---------- pitch ---------- */
+  function buildPitchText() {
+    var s = computeStats();
+    var storeName = $('pitch-store').value.trim();
+    var stores = parseInt($('pitch-stores').value, 10) || 1;
+    if (!s) return 'No data yet.\n\nLog at least a few days of waste on the Log tab, then come back — this page turns your entries into the numbers for your pitch.';
+    var lines = [];
+    lines.push('PREPARED FOOD WASTE — BASELINE SUMMARY');
+    if (storeName) lines.push('Store: ' + storeName);
+    lines.push('Logging window: ' + fmtDateLong(s.first) + ' – ' + fmtDateLong(s.last) +
+      ' (' + s.spanDays + ' days; ' + s.daysWithEntries + ' with entries)');
+    lines.push('');
+    lines.push('Documented waste:   ' + (Math.round(s.units * 100) / 100) + ' units / ' + usd(s.total));
+    lines.push('Weekly run rate:    ' + usd(s.weekly));
+    lines.push('Annualized:         ~' + usd0(s.annual) + '/yr at this store');
+    lines.push('');
+    lines.push('Projected recovery from demand-based production planning:');
+    lines.push('  Conservative (10%): ~' + usd0(s.annual * 0.10) + '/yr');
+    lines.push('  Central      (15%): ~' + usd0(s.annual * 0.15) + '/yr');
+    lines.push('  Optimistic   (20%): ~' + usd0(s.annual * 0.20) + '/yr');
+    if (stores > 1) {
+      lines.push('');
+      lines.push('Across ' + stores + ' stores at similar volume:');
+      lines.push('  ~' + usd0(s.annual * stores * 0.10) + ' – ' + usd0(s.annual * stores * 0.20) + '/yr recoverable');
+    }
+    var top = Object.keys(s.byItem).map(function (name) {
+      return { name: name, val: s.byItem[name].val };
+    }).sort(function (a, b) { return b.val - a.val; }).slice(0, 5);
+    lines.push('');
+    lines.push('Top waste drivers:');
+    top.forEach(function (t, i) {
+      lines.push('  ' + (i + 1) + '. ' + t.name + ' — ' + usd(t.val));
+    });
+    lines.push('');
+    lines.push('Method: every discarded item hand-logged with unit retail price at time of');
+    lines.push('disposal. Annualization = weekly run rate x 52 (seasonality not yet modeled).');
+    lines.push('Recovery range based on typical first-year results for retail perishable');
+    lines.push('waste-reduction pilots.');
+    if (s.spanDays < 14) {
+      lines.push('');
+      lines.push('NOTE: only ' + s.spanDays + ' days of coverage — extend to 14+ before presenting.');
+    }
+    return lines.join('\n');
+  }
+
+  function renderPitch() {
+    $('pitch-store').value = settings.storeName || '';
+    $('pitch-stores').value = settings.stores || 20;
+    $('pitch-output').textContent = buildPitchText();
+  }
+  ['pitch-store', 'pitch-stores'].forEach(function (id) {
+    $(id).addEventListener('input', function () {
+      settings.storeName = $('pitch-store').value.trim();
+      settings.stores = parseInt($('pitch-stores').value, 10) || 20;
+      persist(LS.settings, settings);
+      $('pitch-output').textContent = buildPitchText();
+    });
+  });
+  $('pitch-copy').addEventListener('click', function () {
+    copyText($('pitch-output').textContent, 'Summary copied');
+  });
+  $('pitch-print').addEventListener('click', function () { window.print(); });
+
+  /* ---------- setup: items ---------- */
+  function renderItems() {
+    var box = $('items-list');
+    box.innerHTML = '';
+    items.forEach(function (it) {
+      var row = document.createElement('div');
+      row.className = 'item-edit';
+      row.innerHTML =
+        '<input type="text" value="' + esc(it.name) + '" data-f="name">' +
+        '<select data-f="dept">' + DEPTS.map(function (d) {
+          return '<option' + (d === it.dept ? ' selected' : '') + '>' + d + '</option>';
+        }).join('') + '</select>' +
+        '<input type="number" value="' + it.price + '" step="0.01" min="0" data-f="price" inputmode="decimal">' +
+        '<button class="del" title="Delete item">✕</button>';
+      row.querySelectorAll('[data-f]').forEach(function (input) {
+        input.addEventListener('change', function () {
+          if (input.dataset.f === 'price') it.price = parseFloat(input.value) || 0;
+          else it[input.dataset.f] = input.value;
+          persist(LS.items, items);
+        });
+      });
+      row.querySelector('.del').addEventListener('click', function () {
+        if (!confirm('Delete "' + it.name + '" from the item list? Existing log entries keep their data.')) return;
+        items = items.filter(function (x) { return x.id !== it.id; });
+        if (selectedItemId === it.id) selectedItemId = null;
+        persist(LS.items, items);
+        renderItems();
+      });
+      box.appendChild(row);
+    });
+  }
+  $('item-add').addEventListener('click', function () {
+    items.push({ id: uid(), name: 'New item', dept: 'Other', price: 0 });
+    persist(LS.items, items);
+    renderItems();
+  });
+
+  /* ---------- setup: data ---------- */
+  function csvEscape(v) {
+    v = String(v == null ? '' : v);
+    return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  }
+  function buildCSV() {
+    var rows = [['date', 'time', 'department', 'item', 'qty', 'unit_price', 'value', 'reason', 'note']];
+    logs.slice().sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; })
+      .forEach(function (l) {
+        rows.push([l.date, l.time, l.dept, l.itemName, l.qty, l.price.toFixed(2),
+          (l.qty * l.price).toFixed(2), l.reason, l.note]);
+      });
+    return rows.map(function (r) { return r.map(csvEscape).join(','); }).join('\n');
+  }
+  function buildBackup() {
+    return JSON.stringify({ app: 'ht-stock', v: 1, items: items, logs: logs, settings: settings }, null, 1);
+  }
+  function download(filename, text, mime) {
+    var blob = new Blob([text], { type: mime });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  }
+  function copyText(text, okMsg) {
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); toast(okMsg); }
+      catch (e) { toast('Copy failed — select and copy manually'); }
+      ta.remove();
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { toast(okMsg); }, fallback);
+    } else fallback();
+  }
+
+  $('export-csv').addEventListener('click', function () {
+    download('waste-log-' + todayISO() + '.csv', buildCSV(), 'text/csv');
+  });
+  $('copy-csv').addEventListener('click', function () { copyText(buildCSV(), 'CSV copied'); });
+  $('export-json').addEventListener('click', function () {
+    download('ht-stock-backup-' + todayISO() + '.json', buildBackup(), 'application/json');
+  });
+  $('copy-json').addEventListener('click', function () { copyText(buildBackup(), 'Backup copied'); });
+
+  function restoreFrom(text) {
+    var data;
+    try { data = JSON.parse(text); } catch (e) { toast('That is not valid backup JSON'); return; }
+    if (!data || !Array.isArray(data.items) || !Array.isArray(data.logs)) {
+      toast('Backup is missing items/logs'); return;
+    }
+    if (!confirm('Replace everything on this device with the backup (' + data.logs.length + ' entries)?')) return;
+    items = data.items; logs = data.logs;
+    settings = data.settings || settings;
+    persist(LS.items, items); persist(LS.logs, logs); persist(LS.settings, settings);
+    selectedItemId = null;
+    $('restore-text').value = '';
+    renderItems();
+    toast('Restored ' + logs.length + ' entries');
+  }
+  $('restore-paste').addEventListener('click', function () {
+    var t = $('restore-text').value.trim();
+    if (!t) { toast('Paste backup JSON first'); return; }
+    restoreFrom(t);
+  });
+  $('restore-pick').addEventListener('click', function () { $('restore-file').click(); });
+  $('restore-file').addEventListener('change', function () {
+    var f = $('restore-file').files[0];
+    if (!f) return;
+    var r = new FileReader();
+    r.onload = function () { restoreFrom(r.result); $('restore-file').value = ''; };
+    r.readAsText(f);
+  });
+  $('wipe-all').addEventListener('click', function () {
+    if (!confirm('Erase ALL items, entries, and settings from this device? This cannot be undone.')) return;
+    if (!confirm('Really erase everything? Export a backup first if in doubt.')) return;
+    items = DEFAULT_ITEMS.slice(); logs = []; settings = { storeName: '', stores: 20 };
+    persist(LS.items, items); persist(LS.logs, logs); persist(LS.settings, settings);
+    selectedItemId = null;
+    renderItems();
+    toast('Wiped — back to a fresh start');
+  });
+
+  /* ---------- boot ---------- */
+  renderLog();
+})();
+</script>
+</body>
+</html>
