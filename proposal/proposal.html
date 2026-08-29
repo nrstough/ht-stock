@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<title>Fresh Forecast</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>
+  :root {
+    --bg: #f6f7f4;
+    --card: #ffffff;
+    --ink: #17211b;
+    --ink-2: #4d5a52;
+    --muted: #7d8a81;
+    --accent: #1e7a46;
+    --accent-soft: #e7f2ec;
+    --border: #dde3dd;
+    --grid: #e6e9e4;
+    --s1: #2a78d6;
+    --s2: #eb6834;
+    --warnbg: #fdf6e8;
+    --warnbr: #e5cf9a;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121713;
+      --card: #1a201b;
+      --ink: #eef1ec;
+      --ink-2: #b9c4bb;
+      --muted: #84918a;
+      --accent: #4cb87a;
+      --accent-soft: #1f3328;
+      --border: #2c352e;
+      --grid: #262f28;
+      --s1: #3987e5;
+      --s2: #d95926;
+      --warnbg: #2b2415;
+      --warnbr: #57491f;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121713;
+    --card: #1a201b;
+    --ink: #eef1ec;
+    --ink-2: #b9c4bb;
+    --muted: #84918a;
+    --accent: #4cb87a;
+    --accent-soft: #1f3328;
+    --border: #2c352e;
+    --grid: #262f28;
+    --s1: #3987e5;
+    --s2: #d95926;
+    --warnbg: #2b2415;
+    --warnbr: #57491f;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16.5px/1.65 "Source Serif 4", Georgia, "Times New Roman", serif;
+  }
+  .sans { font-family: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .page { max-width: 780px; margin: 0 auto; padding: 44px 22px 80px; }
+  .eyebrow {
+    font: 600 12.5px/1 "Archivo", system-ui, sans-serif;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font: 700 44px/1.05 "Archivo", system-ui, sans-serif;
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+    text-wrap: balance;
+  }
+  .thesis {
+    font-size: 20px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    margin: 0 0 18px;
+    max-width: 62ch;
+    text-wrap: balance;
+  }
+  .meta {
+    font: 400 13.5px/1.6 "Archivo", system-ui, sans-serif;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 0;
+    margin: 22px 0 30px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 26px;
+  }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 {
+    font: 650 22px/1.25 "Archivo", system-ui, sans-serif;
+    letter-spacing: -0.01em;
+    margin: 44px 0 10px;
+  }
+  h3 { font: 600 16px/1.3 "Archivo", system-ui, sans-serif; margin: 22px 0 6px; }
+  p { margin: 0 0 14px; max-width: 68ch; }
+  li { margin-bottom: 6px; }
+  ul, ol { padding-left: 22px; max-width: 66ch; }
+  strong { font-weight: 600; }
+  .statband {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 10px;
+    margin: 26px 0 8px;
+  }
+  .stat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .stat .v {
+    font: 650 30px/1.1 "Archivo", system-ui, sans-serif;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  .stat .l { font: 400 13.5px/1.45 "Archivo", system-ui, sans-serif; color: var(--ink-2); }
+  .callout {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 10px 10px 0;
+    padding: 14px 18px;
+    margin: 18px 0;
+    max-width: 66ch;
+  }
+  .callout p { margin: 0; }
+  .honesty {
+    background: var(--warnbg);
+    border: 1px solid var(--warnbr);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 20px 0;
+    max-width: 70ch;
+  }
+  .honesty h3 { margin-top: 0; }
+  .honesty p:last-child { margin-bottom: 0; }
+  figure { margin: 26px 0; }
+  figure svg { max-width: 100%; height: auto; display: block; }
+  figcaption {
+    font: 400 13px/1.55 "Archivo", system-ui, sans-serif;
+    color: var(--muted);
+    margin-top: 10px;
+    max-width: 70ch;
+  }
+  .chart-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 18px 10px;
+  }
+  .legend {
+    display: flex; gap: 16px;
+    font: 400 12.5px/1 "Archivo", system-ui, sans-serif;
+    color: var(--ink-2);
+    margin-bottom: 12px;
+  }
+  .legend .k { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .sw { width: 12px; height: 10px; border-radius: 3px; display: inline-block; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font: 400 14px/1.5 "Archivo", system-ui, sans-serif;
+    margin: 14px 0 6px;
+  }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--grid); text-align: left; }
+  th { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .table-scroll { overflow-x: auto; }
+  .good { color: var(--accent); font-weight: 600; }
+  .ph {
+    background: var(--accent-soft);
+    border-radius: 4px;
+    padding: 0 5px;
+    font-style: normal;
+  }
+  .fine { font: 400 13px/1.6 "Archivo", system-ui, sans-serif; color: var(--muted); max-width: 72ch; }
+  .divider { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  @media print {
+    body { background: #ffffff; color: #17211b; font-size: 13px; }
+    .page { padding: 0; max-width: none; }
+    h1 { font-size: 30px; }
+    h2 { page-break-after: avoid; }
+    .stat, .chart-card, .honesty { border-color: #ccc; }
+    figure, .chart-card, .honesty, .statband { page-break-inside: avoid; }
+  }
+</style>
+
+<div class="page">
+
+<p class="eyebrow">Internal proposal · Prepared foods · <span class="ph">[Store #]</span></p>
+<h1>Fresh Forecast</h1>
+<p class="thesis">Every night we throw away food we made too much of, and every week we
+send customers home without food we made too little of. Both are the same forecasting
+problem, and it is now cheap to solve.</p>
+
+<div class="meta">
+  <span>Prepared by <b><span class="ph">[Your name]</span></b>, <span class="ph">[role]</span></span>
+  <span><b>Status:</b> concept validated in simulation</span>
+  <span><b>Built with:</b> zero company data</span>
+</div>
+
+<div class="statband">
+  <div class="stat"><div class="v">−37%</div>
+    <div class="l">waste in a simulated pilot year with product availability held at today's level</div></div>
+  <div class="stat"><div class="v">−60%</div>
+    <div class="l">waste at the profit-optimal setting (availability 98% → 96%)</div></div>
+  <div class="stat"><div class="v">10–15%</div>
+    <div class="l">the reduction this proposal actually promises for a real 90-day pilot</div></div>
+</div>
+<p class="fine">Simulation results from a fully synthetic 3-year store dataset — method proven,
+dollars illustrative. The real dollar figure comes from the measured baseline in Phase 1 below.</p>
+
+<h2>Executive summary</h2>
+<p>Prepared foods — bakery, pizza, hot foods, fresh cases — are produced against gut-feel
+par sheets. The result is a structural leak: industry-typical waste for these departments runs
+15–25% of production, and the padding that "prevents" empty cases doesn't, because the pars
+can't see weather, holidays, or trend. I am asking for three things: <strong>written permission
+to access this store's sales data for a defined item list, a modest number of paid
+hours to run a 90-day single-store pilot, and an agreed recognition structure if the pilot
+hits its measured target</strong> — at least a 10% reduction in prepared-food waste with no
+loss of on-shelf availability. The forecasting system already exists: I built it, on my own
+time, using only synthetic data, and validated it in a full-year simulated trial. The pilot's
+downside is a few pallets of mis-produced food; the upside, extended across a district,
+is six figures a year.</p>
+
+<h2>The problem is two-sided, which is why it persists</h2>
+<p>Make too much and we eat the cost of goods. Make too little and we lose the margin
+<em>and</em> disappoint the customer standing at an empty hot bar at 6&nbsp;pm. A par sheet
+solves this with a flat safety pad, but demand isn't flat: it swings with the day of the
+week, the season, the weather (a rainy Tuesday and a sunny Friday are different stores), and
+holidays — Super Bowl Sunday triples pizza demand; the day before a snow forecast, bread sells
+out no matter what we bake. A trailing average can't see any of that coming. A forecast can,
+because all of those drivers are known <em>the day before</em>.</p>
+
+<h2>What already exists</h2>
+<ol>
+  <li><strong>A waste-measurement tool (Phase 1, deployed).</strong> A phone app for logging
+  every discarded item with its retail value — it produces this store's real baseline number
+  in two weeks of use. Baseline result: <span class="ph">[$ — to be filled from the
+  two-week log]</span>.</li>
+  <li><strong>A working forecasting system (proof of concept, complete).</strong> A demand
+  model — a compact neural network of the same family used industrially for retail demand
+  forecasting — plus a decision rule that turns each item's forecast into a morning production
+  quantity. To keep every legal and data-policy question at zero, it was built and tested
+  entirely on a synthetic store: three simulated years of sales with realistic weekday,
+  seasonal, holiday, and weather structure, plus the noise no model should be able to
+  predict.</li>
+</ol>
+
+<figure>
+  <svg viewBox="0 0 760 300" role="img"
+       aria-label="Flow: sales history, weather forecast, and calendar feed a demand model, which outputs a demand range per item; a decision rule converts it to a production quantity balancing waste cost against lost sales; that prints as a morning production sheet, and each day's results feed back into the history.">
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0L10 5L0 10z" fill="currentColor"/>
+      </marker>
+    </defs>
+    <g fill="none" stroke="currentColor" stroke-width="1.3">
+      <rect x="10" y="18" width="150" height="44" rx="8"/>
+      <rect x="10" y="78" width="150" height="44" rx="8"/>
+      <rect x="10" y="138" width="150" height="44" rx="8"/>
+      <rect x="240" y="66" width="170" height="98" rx="10"/>
+      <rect x="490" y="66" width="150" height="98" rx="10" stroke="var(--accent)" stroke-width="2"/>
+      <rect x="490" y="222" width="150" height="52" rx="8"/>
+    </g>
+    <g font-family="Archivo, system-ui, sans-serif" font-size="12.5" fill="currentColor">
+      <text x="85" y="37" text-anchor="middle">Sales history</text>
+      <text x="85" y="53" text-anchor="middle" font-size="11" opacity="0.65">(sellouts flagged)</text>
+      <text x="85" y="104" text-anchor="middle">Weather forecast</text>
+      <text x="85" y="164" text-anchor="middle">Calendar &amp; holidays</text>
+      <text x="325" y="102" text-anchor="middle" font-weight="600">Demand model</text>
+      <text x="325" y="121" text-anchor="middle" font-size="11.5" opacity="0.75">one network,</text>
+      <text x="325" y="136" text-anchor="middle" font-size="11.5" opacity="0.75">every item</text>
+      <text x="565" y="100" text-anchor="middle" font-weight="600" fill="var(--accent)">Decision rule</text>
+      <text x="565" y="119" text-anchor="middle" font-size="11.5" opacity="0.8">cost of one-too-many</text>
+      <text x="565" y="134" text-anchor="middle" font-size="11.5" opacity="0.8">vs one-too-few</text>
+      <text x="565" y="243" text-anchor="middle" font-weight="600">Morning sheet</text>
+      <text x="565" y="261" text-anchor="middle" font-size="11.5" opacity="0.75">make 14 · thaw 2 cases</text>
+    </g>
+    <g stroke="currentColor" stroke-width="1.3" fill="none" marker-end="url(#arr)">
+      <line x1="160" y1="40" x2="232" y2="82"/>
+      <line x1="160" y1="100" x2="232" y2="106"/>
+      <line x1="160" y1="160" x2="232" y2="130"/>
+      <line x1="410" y1="115" x2="482" y2="115"/>
+      <line x1="565" y1="164" x2="565" y2="214"/>
+      <path d="M490 248 L85 248 L85 190"/>
+    </g>
+    <g font-family="Archivo, system-ui, sans-serif" font-size="11" fill="currentColor" opacity="0.7">
+      <text x="446" y="105" text-anchor="middle">demand as</text>
+      <text x="446" y="119" text-anchor="middle">a range</text>
+      <text x="583" y="193">quantity</text>
+      <text x="287" y="242" text-anchor="middle">each day's sales &amp; waste feed back</text>
+    </g>
+  </svg>
+  <figcaption>The whole system, end to end. No integration is required for a pilot: the
+  inputs are a sales export, a public weather forecast, and a calendar; the output is a
+  printed sheet in the kitchen each morning. The decision rule is the classic newsvendor
+  balance — produce at the point where the cost of one wasted unit equals the cost of one
+  missed sale — so cheap high-margin items pad generously and expensive low-margin items
+  run lean, item by item, automatically.</figcaption>
+</figure>
+
+<h2>Proof of concept: a year replayed</h2>
+<p>The model trained on the first two simulated years — seeing only what a real store sees,
+sales censored by sellouts — and then ran in shadow against the held-out third year. For
+every day and item, it recommended a quantity; the simulation's true demand, which no model
+ever sees, settled what would have sold, been wasted, and been missed. Two benchmark
+forecasters (a trailing average and a linear model) ran alongside so the network had to earn
+its seat, and an oracle with perfect knowledge of demand marked the best any method could do.</p>
+
+<figure class="chart-card">
+  <div class="legend">
+    <span class="k"><span class="sw" style="background:var(--s2)"></span>waste, at cost</span>
+    <span class="k"><span class="sw" style="background:var(--s1)"></span>missed sales, at margin</span>
+  </div>
+  <svg viewBox="0 0 740 236" role="img"
+       aria-label="Annual economic cost by policy: status quo $56K; naive average $48K; linear model $48K; network with availability held $41K; network profit-optimal $40K; oracle $36K.">
+    <g font-family="Archivo, system-ui, sans-serif" font-size="12.5">
+      <!-- grid -->
+      <g stroke="var(--grid)" stroke-width="1">
+        <line x1="330" y1="6" x2="330" y2="212"/><line x1="450" y1="6" x2="450" y2="212"/>
+        <line x1="570" y1="6" x2="570" y2="212"/><line x1="690" y1="6" x2="690" y2="212"/>
+      </g>
+      <g fill="var(--muted)" font-size="11">
+        <text x="210" y="228" text-anchor="middle">$0</text>
+        <text x="330" y="228" text-anchor="middle">$15K</text>
+        <text x="450" y="228" text-anchor="middle">$30K</text>
+        <text x="570" y="228" text-anchor="middle">$45K</text>
+        <text x="690" y="228" text-anchor="middle">$60K</text>
+      </g>
+      <!-- rows: x = 210 + v/15000*120 ; waste_cost, lost_margin -->
+      <g fill="var(--ink-2)">
+        <text x="200" y="30" text-anchor="end">Status quo (par sheet)</text>
+        <text x="200" y="64" text-anchor="end">Naive trailing average</text>
+        <text x="200" y="98" text-anchor="end">Linear model</text>
+        <text x="200" y="132" text-anchor="end">Network · availability held</text>
+        <text x="200" y="166" text-anchor="end">Network · profit-optimal</text>
+        <text x="200" y="200" text-anchor="end">Oracle (perfect knowledge)</text>
+      </g>
+      <!-- status quo: waste 47563 lost 8448 -->
+      <rect x="210" y="16" width="380.5" height="18" fill="var(--s2)"/>
+      <rect x="592.5" y="16" width="65.6" height="18" rx="3" fill="var(--s1)"/>
+      <text x="666" y="30" fill="var(--ink-2)">$56K</text>
+      <!-- naive: 22553 / 25473 -->
+      <rect x="210" y="50" width="180.4" height="18" fill="var(--s2)"/>
+      <rect x="392.4" y="50" width="201.8" height="18" rx="3" fill="var(--s1)"/>
+      <text x="602" y="64" fill="var(--ink-2)">$48K</text>
+      <!-- ridge: 14378 / 33239 -->
+      <rect x="210" y="84" width="115.0" height="18" fill="var(--s2)"/>
+      <rect x="327" y="84" width="263.9" height="18" rx="3" fill="var(--s1)"/>
+      <text x="599" y="98" fill="var(--ink-2)">$48K</text>
+      <!-- dl_matched: 29379 / 11699 -->
+      <rect x="210" y="118" width="235.0" height="18" fill="var(--s2)"/>
+      <rect x="447" y="118" width="91.6" height="18" rx="3" fill="var(--s1)"/>
+      <text x="547" y="132" fill="var(--ink-2)">$41K</text>
+      <!-- dl: 18497 / 21226 -->
+      <rect x="210" y="152" width="148.0" height="18" fill="var(--s2)"/>
+      <rect x="360" y="152" width="167.8" height="18" rx="3" fill="var(--s1)"/>
+      <text x="536" y="166" fill="var(--ink-2)">$40K</text>
+      <!-- oracle: 19155 / 16633 -->
+      <rect x="210" y="186" width="153.2" height="18" fill="var(--s2)"/>
+      <rect x="365.2" y="186" width="131.1" height="18" rx="3" fill="var(--s1)"/>
+      <text x="505" y="200" fill="var(--ink-2)">$36K</text>
+    </g>
+  </svg>
+  <figcaption>Total cost of being wrong, per simulated store-year: wasted units at cost of
+  goods plus missed sales at lost margin. The network closes 81% of the gap between today's
+  practice and perfect knowledge; nothing closes all of it, because some demand is
+  genuinely unpredictable.</figcaption>
+</figure>
+
+<div class="table-scroll"><table>
+  <thead><tr><th>Held-out year, per store</th><th class="num">Waste (retail value)</th>
+  <th class="num">Waste, % of production</th><th class="num">Availability (fill rate)</th>
+  <th class="num">Total economic cost</th></tr></thead>
+  <tbody>
+    <tr><td>Status quo (par sheet)</td><td class="num">$138,462</td><td class="num">18.8%</td>
+      <td class="num">98.1%</td><td class="num">$56,011</td></tr>
+    <tr><td>Model, availability held</td><td class="num">$87,351 <span class="good">(−37%)</span></td>
+      <td class="num">12.8%</td><td class="num">97.6%</td><td class="num">$41,078</td></tr>
+    <tr><td>Model, profit-optimal</td><td class="num">$55,883 <span class="good">(−60%)</span></td>
+      <td class="num">8.8%</td><td class="num">95.5%</td><td class="num">$39,723</td></tr>
+  </tbody>
+</table></div>
+<p class="fine">Forecast accuracy: 13.0% weighted error for the network vs 15.5% for the
+trailing average and 15.1% for the linear benchmark. An interactive version of these results,
+with the full day-by-day replay, accompanies this document.</p>
+
+<div class="honesty">
+  <h3>What the simulation proves — and what it doesn't</h3>
+  <p>It proves the <strong>method</strong>: that demand with realistic weekday, weather,
+  holiday, and seasonal structure is learnable from sales data alone, and that production
+  driven by those forecasts beats a well-run par sheet by a wide margin. It does <strong>not</strong>
+  prove this store's dollar figure — the simulated store is a plausible invention, and its
+  simulated manager, though deliberately competent, is still an invention. That is why this
+  proposal promises 10–15% in the real pilot, not 37–60%, and why Phase&nbsp;1's measured
+  baseline — not the simulation — is the number the pilot is judged against. No company data
+  of any kind was used to build any of this.</p>
+</div>
+
+<h2>The 90-day pilot</h2>
+<ol>
+  <li><strong>Weeks 1–2 · Baseline.</strong> Log all discarded prepared-food items
+  (5–10 pilot SKUs) with the Phase&nbsp;1 tool. Output: this store's real waste number,
+  in dollars per year.</li>
+  <li><strong>Weeks 3–6 · Shadow mode.</strong> With data access granted, the model
+  retrains on this store's sales history and prints its morning sheet — but the kitchen
+  ignores it. We record what it <em>would</em> have done. Output: a forecast-accuracy
+  report against reality, before a single unit of production changes.</li>
+  <li><strong>Weeks 7–13 · Live.</strong> The kitchen follows the sheet (the manager can
+  override it any day, and overrides are logged too). Output: measured waste and sellout
+  change versus the baseline.</li>
+</ol>
+<div class="callout"><p><strong>Success criterion, agreed in advance:</strong> at least a
+10% reduction in prepared-food waste dollars versus the Phase&nbsp;1 baseline, with no
+material drop in on-shelf availability. If shadow mode shows the forecasts aren't accurate
+enough, we stop at week&nbsp;6 and nothing in the kitchen has changed.</p></div>
+
+<h2>The asks</h2>
+<ol>
+  <li><strong>Written permission</strong> for read-only access to daily sales and production
+  counts for the pilot items at this store, for the duration of the pilot.</li>
+  <li><strong>40–80 paid hours</strong> of non-floor time to connect the store's data,
+  run shadow mode, and operate the pilot.</li>
+  <li><strong>An agreed recognition structure</strong>, in writing, tied to the measured
+  result — a bonus and/or a role that lets this scale beyond one store, settled before the
+  live phase begins.</li>
+</ol>
+
+<h2>If it works</h2>
+<p>The simulated economics, discounted to the 10–15% this proposal actually promises and
+applied to a measured baseline of <span class="ph">[$baseline]</span>/year, pay back the
+pilot's hours in the first weeks of live operation. The system is one model serving every
+item — the same architecture scales from 9 SKUs at one store to every prepared-foods case
+in a district without redesign. At district scale
+(<span class="ph">[≈20]</span> stores), simulation-grade performance would be worth roughly
+$300K+ per year in avoided economic cost; even the conservative pitch number is six figures.
+The pilot is how we replace "roughly" with a measured fact.</p>
+
+<h2>Risks, named</h2>
+<div class="table-scroll"><table>
+  <thead><tr><th>Risk</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td>Forecasts don't transfer from simulation to this store</td>
+        <td>Shadow mode is the gate: four weeks of predictions scored against reality
+        before production changes at all.</td></tr>
+    <tr><td>Availability suffers and customers notice</td>
+        <td>Pilot runs at the availability-held setting; sellouts are tracked daily and
+        any item can revert to its par instantly.</td></tr>
+    <tr><td>Kitchen doesn't trust the sheet</td>
+        <td>Manager override is a feature, logged not fought; the pilot measures the
+        blend, which is how it would really run.</td></tr>
+    <tr><td>Data access or IP questions</td>
+        <td>Nothing was built on company data; access is scoped, read-only, written, and
+        revocable. IP and recognition are settled in writing before the live phase.</td></tr>
+  </tbody>
+</table></div>
+
+<hr class="divider">
+<p class="fine"><strong>Method notes.</strong> Demand model: a global quantile-regression
+neural network (GRU encoder over each item's trailing 28 days, learned item embeddings,
+calendar/weather/holiday covariates; pinball loss with censoring handling on sellout days,
+since sales only bound demand from below when the case sold out). Decision layer: newsvendor
+critical fractile per item, rounded to batch sizes. Validation: trained on simulated
+2023–24, tested untouched on 2025 against naive, linear, and oracle policies. All simulation
+parameters, code, and data are in the project repository and reproducible with two commands.</p>
+
+</div>
+
+</body>
+</html>

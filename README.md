@@ -1,11 +1,46 @@
-# HT Stock — Prepared Food Waste Tracker
+# HT Stock — Prepared Food Waste: Measure, Predict, Reduce
 
-A phone-friendly tool for documenting prepared-food waste (bakery, pizza, hot foods, fresh foods)
-at a grocery store, and turning that log into the dollar numbers that anchor a waste-reduction pitch.
+Cut grocery prepared-food waste (bakery, pizza, hot foods, fresh cases) by replacing gut-feel
+par sheets with demand forecasts. Three pieces, all in this repo:
 
-This is **Phase 1** of a larger idea (predicting demand to cut over-production waste). Phase 1 is
-deliberately the unglamorous part: **measure the baseline first.** Nobody funds "reduces waste 15%";
-people fund "recovers $X/year at this store." This tool produces $X.
+1. **Phase 1 — measure** (`index.html`): a phone-friendly waste logger that produces a store's
+   real baseline in two weeks of use. Nobody funds "reduces waste 15%"; people fund
+   "recovers $X/year at this store." This tool produces $X.
+2. **Proof of concept — predict** (`sim/`, `model/`): a synthetic 3-year store, a global quantile
+   demand network, a newsvendor decision layer, and a shadow-replay backtest of the held-out
+   year. Built on **zero real data** so it settles the method without touching data-permission
+   or IP questions.
+3. **The pitch** (`proposal/`, `poc/`): an executive proposal and an interactive results
+   dashboard generated from the backtest.
+
+## Proof-of-concept results (simulated held-out year, one store)
+
+| Policy | Waste (retail) | Waste % of production | Fill rate | Economic cost |
+|---|---|---|---|---|
+| Status quo (par sheet) | $138,462 | 18.8% | 98.1% | $56,011 |
+| Model, availability held | $87,351 (−37%) | 12.8% | 97.6% | $41,078 |
+| Model, profit-optimal | $55,883 (−60%) | 8.8% | 95.5% | $39,723 |
+| Oracle (perfect knowledge) | $57,435 | 8.9% | 96.6% | $35,788 |
+
+The network's forecast error (13.0% WAPE) beats a trailing-average (15.5%) and a linear model
+(15.1%), and captures ~81% of the improvement perfect knowledge would allow. Every number is
+reproducible:
+
+```bash
+pip install -r requirements.txt
+python -m sim.generate     # 3 years of synthetic store data -> data/store_synth.csv
+python -m model.train      # train the quantile network (CPU, ~1 min)
+python -m model.backtest   # replay 2025 under six policies -> results/results.json
+```
+
+Model: GRU encoder over each item's trailing 28 days + item embeddings + calendar/weather
+covariates → 11 demand quantiles (pinball loss, censored on sellout days, since sales only
+bound demand from below when the case sold out). Decision layer: per-item newsvendor critical
+fractile, batch-rounded. See `data/README.md` for what the simulation does and doesn't claim.
+
+---
+
+## Phase 1: the waste logger
 
 ## What it does
 
@@ -48,12 +83,14 @@ The whole app is a single file with no dependencies, no build step, and no serve
 
 ## Roadmap
 
-- **Phase 1 (this):** hand-logged baseline. ✅
-- **Phase 2:** with written permission and real sales/production data, a demand model that suggests
-  daily production quantities per item (day-of-week + trend, later weather/holidays).
-- **Phase 3:** shadow mode — the model makes suggestions, nobody follows them, and you measure how
-  much waste following them *would have* avoided.
-- **Phase 4:** live pilot with a measured before/after.
+- **Phase 1:** hand-logged baseline (this tool). ✅
+- **Proof of concept:** demand network + newsvendor on synthetic data, validated in shadow
+  replay. ✅ (`sim/`, `model/`)
+- **Phase 2:** with written permission, retrain the same model on the store's real sales
+  export.
+- **Phase 3:** shadow mode — the model prints its morning sheet, nobody follows it, and its
+  forecasts are scored against reality for four weeks.
+- **Phase 4:** live pilot with a measured before/after against the Phase 1 baseline.
 
 ## A note on data and permission
 
