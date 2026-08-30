@@ -10,7 +10,10 @@ this panel would be wrong -- duplicate item-days, a hole in a date index, sold a
 too little history to split. A WARNING means training is fine but the reader has to know --
 no sellout signal, a promotion the model will fit as noise, an item that will be dropped. An
 INFO records an auto-repair ingest already made, so that a grid-filled zero or a clipped
-refund is visible here rather than only in a JSON report nobody opens.
+refund is visible here rather than only in a JSON report nobody opens. Half of those repairs
+leave no trace in the panel -- a collapsed duplicate is a row that is gone, a short hole
+filled with a zero keeps row_status "ok" -- so they are read from the ingest report when the
+caller hands one over (--ingest-report), and their absence is stated when nobody does.
 """
 import argparse
 import collections
@@ -115,7 +118,8 @@ def _runs(mask, dates):
     return out
 
 
-def item_census(panel, context_days=CONTEXT_DAYS, train_end=None):
+def item_census(panel, context_days=CONTEXT_DAYS, train_end=None,
+                min_item_days=MIN_ITEM_TRAIN_DAYS):
     """Per item: what history there is, and whether it is enough. The table you hand the store."""
     rows = []
     for item, grp in panel.groupby("item", sort=True):
@@ -134,9 +138,9 @@ def item_census(panel, context_days=CONTEXT_DAYS, train_end=None):
             zero_days=int((open_rows.sold == 0).sum()),
             sellout_rate=round(float(seen.stockout.mean()), 3) if len(seen) else None,
             longest_gap=max([h[2] for h in holes] + [g[2] for g in gaps] + [0]),
-            status="ok" if len(train) >= MIN_ITEM_TRAIN_DAYS else "short",
-            reason="" if len(train) >= MIN_ITEM_TRAIN_DAYS
-            else f"{len(train)} of {MIN_ITEM_TRAIN_DAYS} open train days",
+            status="ok" if len(train) >= min_item_days else "short",
+            reason="" if len(train) >= min_item_days
+            else f"{len(train)} of {min_item_days} open train days",
         ))
     return pd.DataFrame(rows)
 
@@ -161,6 +165,38 @@ def gap_census(panel):
 # ---- the checks ----
 
 def _structural(panel, items, mapping, add):
+    # An item-movement report is routinely run for a district, so several store numbers in
+    # the first export is a normal accident rather than an exotic one. Nothing below this
+    # module keys on store: features.build groups by item alone, so N stores put N rows on
+    # every date, and the failure surfaces days later as "not enough history" -- which sends
+    # somebody back to the store to ask for history they already handed over.
+    stores = panel.store.value_counts().sort_index()
+    # conform() fills an empty store cell with the "default" placeholder, so a single-store
+    # panel with a few blanks counts as two "stores". Diagnosing that as a district export
+    # sends somebody to re-run a report for one store, which cannot fix a blank cell.
+    blank = [k for k in stores.index if str(k).strip() in ("", "default", "nan", "None")]
+    if blank and len(stores) - len(blank) == 1:
+        n = int(sum(int(stores[k]) for k in blank))
+        real = [k for k in stores.index if k not in blank][0]
+        add("error", "store_blank", None,
+            f"{n} row(s) carry no store number (the '{blank[0]}' placeholder) beside "
+            f"{int(stores[real])} rows of store {real}; that is a hole in the store column, "
+            "not a district export, and re-running the report for one store will not change "
+            "it. Fill the column in the raw file, or drop it and let mapping.store name the "
+            "store", n)
+    elif len(stores) > 1:
+        named = ", ".join(f"{k} ({int(v)} rows)" for k, v in list(stores.items())[:6])
+        more = "" if len(stores) <= 6 else f", and {len(stores) - 6} more"
+        add("error", "multi_store", None,
+            f"the panel carries {len(stores)} store numbers -- {named}{more}. v1 forecasts one "
+            f"store, and every module below this one keys on item alone, so each item's series "
+            f"holds {len(stores)} rows per date: the {CONTEXT_DAYS}-row context window would "
+            f"reach back roughly {CONTEXT_DAYS // len(stores)} calendar days rather than "
+            f"{CONTEXT_DAYS}, and the per-item history floor counts rows, so a district export "
+            f"reads as long enough while its date range is not. The duplicate-key check cannot "
+            f"stand in for this, because store is part of the key. "
+            + schema.ONE_STORE_REMEDY, len(stores))
+
     dupes = panel.duplicated(list(schema.KEY), keep=False)
     if dupes.any():
         sample = panel.loc[dupes, list(schema.KEY)].head(3).to_dict("records")
@@ -221,6 +257,13 @@ def _quantities(panel, items, mapping, add):
         add("error", "sold_negative", None,
             f"{int(neg.sum())} rows have negative sales; a refund line has to be netted into "
             "the day it belongs to, or clipped and marked row_status='suspect'", int(neg.sum()))
+    neg_waste = panel.wasted < 0
+    if neg_waste.any():
+        add("error", "wasted_negative", None,
+            f"{int(neg_waste.sum())} rows carry negative waste; waste is a count of what was "
+            "thrown away, so a negative one silently subtracts from the Phase-1 baseline the "
+            "whole before/after is measured against -- settle it in the source record",
+            int(neg_waste.sum()))
     # only row_status 'closed' -- a partial day is an early close that still sold, and a
     # 'suspect' row is a clipped refund that may legitimately carry sales
     shut = panel[(panel.row_status == "closed") & (panel.sold > 0)]
@@ -281,7 +324,7 @@ def _quantities(panel, items, mapping, add):
                     "decimal point or a case-vs-each units change", len(wild))
 
 
-def _coverage(panel, items, mapping, add):
+def _coverage(panel, items, mapping, add, min_item_days=MIN_ITEM_TRAIN_DAYS):
     max_gap = int((mapping or {}).get("gaps", {}).get("max_unexplained_gap_days", 3))
     for item, grp in panel.groupby("item", sort=True):
         grp = grp.sort_values("date")
@@ -300,9 +343,9 @@ def _coverage(panel, items, mapping, add):
                 "assembled some other way", total)
 
         train = grp[grp.is_closed == 0]
-        if len(train) < MIN_ITEM_TRAIN_DAYS:
+        if len(train) < min_item_days:
             add("warning", "short_history", item,
-                f"{len(train)} open days against the {MIN_ITEM_TRAIN_DAYS}-day per-item floor; "
+                f"{len(train)} open days against the {min_item_days}-day per-item floor; "
                 "features.build will exclude it and the morning sheet will print a trailing par "
                 "under NO FORECAST instead of a forecast", len(train))
 
@@ -333,18 +376,136 @@ def _coverage(panel, items, mapping, add):
                 "the model trains on it as real zero demand. Add it to mapping.closures.dates "
                 "or supply the store hours file", len(dead))
 
+    # produced - sold is the measured waste for a day-fresh item, so a row that has the
+    # production count and still has no waste number is a hole nothing downstream can see:
+    # the coverage percentages report it as one number and no check reads them
+    fresh = panel["item"].map({k: int(it.get("shelf_life_days", 1)) == 1 for k, it in
+                               (items or {}).items()}).fillna(False).to_numpy()
+    gap = fresh & panel.produced.notna().to_numpy() & panel.wasted.isna().to_numpy()
+    if gap.any():
+        n = int(gap.sum())
+        add("warning", "waste_not_derived", None,
+            f"{n} day-fresh row(s) carry a production count but no waste number, though waste "
+            "is produced - sold for exactly those rows. A panel ingest built fills them; this "
+            "one was assembled some other way, and every waste figure below is short by them",
+            n)
+
     inserted = int((panel.row_status == "missing").sum())
     if inserted and inserted / len(panel) > GRID_SHARE_WARN:
         add("warning", "grid_share", None,
             f"{inserted} rows ({inserted / len(panel):.1%}) are grid-inserted 'missing' days "
             "rather than observations; every one of them is a day the export did not explain",
             inserted)
+
+
+def _repairs(panel, mapping, ingest_report, add):
+    """Every auto-repair ingest made, counted, on the one page a person actually reads.
+
+    Two sources, and they can see different things. The panel records the repairs that changed
+    a row's status: a filled outage, a declared closure, a clipped refund. It cannot record the
+    rest -- a collapsed duplicate is a row that is no longer there, a dropped item code left
+    nothing behind, and a short hole filled with a zero keeps row_status "ok", which in this
+    file is indistinguishable from a day that really sold nothing. Those come from the ingest
+    report or they do not come at all, so with no report this says so out loud rather than
+    letting three INFOs read as "three repairs happened".
+    """
     for status in ("suspect", "partial", "closed", "missing", "not_carried"):
         n = int((panel.row_status == status).sum())
         if n:
             add("info", f"repair_{status}", None,
                 f"{n} row(s) carry row_status='{status}'; they are context only and never a "
                 "training or scoring target", n)
+
+    if not ingest_report:
+        add("info", "repair_report_absent", None,
+            "no ingest report accompanies this panel, so the repairs that leave no trace in it "
+            "-- lines collapsed as duplicates, lines dropped under an unmapped item code, a "
+            "short hole filled with a zero and left row_status='ok' -- cannot be counted here, "
+            "and their absence from this page is not evidence they did not happen. Pass "
+            "--ingest-report with the JSON `python -m ht.ingest --report` wrote beside the "
+            "panel", 0)
+        return
+
+    grid = ingest_report.get("grid_rows_inserted") or {}
+    total = int(sum(int(v) for v in grid.values()))
+    if total:
+        flagged = int((panel.row_status == "missing").sum())
+        rest = total - flagged
+        tail = ("" if rest <= 0 else
+                f"; the other {rest} sat in runs short enough to be read as genuine zero-sales "
+                "days, so they carry row_status 'ok' (or a closure stamped over them) and "
+                "nothing below this line can tell them from an observed zero")
+        top = ", ".join(f"{k} {int(v)}" for k, v in
+                        sorted(grid.items(), key=lambda kv: (-int(kv[1]), kv[0]))[:5])
+        add("info", "repair_grid_filled", None,
+            f"ingest inserted {total} day(s) the export omitted, across {len(grid)} item(s) "
+            f"({top}); {flagged} of them carry row_status='missing' here{tail}", total)
+
+    dupes = int(ingest_report.get("duplicates_collapsed") or 0)
+    if dupes:
+        policy = (mapping or {}).get("dedupe", {}).get("policy")
+        add("info", "repair_duplicates_collapsed", None,
+            f"{dupes} raw line(s) shared a (store, item, date) and were combined under "
+            f"dedupe.policy {policy!r}; they are not rows in this panel, so no count on this "
+            "page reaches them -- a second register, a re-rung transaction and a refund line "
+            "all arrive this way", dupes)
+
+    # negatives_seen counts the rows that netted out negative, negatives_clipped the rows
+    # this run actually changed. They differ under negatives.policy 'keep', where the panel
+    # still carries the negative sales -- so the INFO reports both rather than one number
+    # whose name only happens to be right under one policy.
+    seen = int(ingest_report.get("negatives_seen",
+                                 ingest_report.get("negatives_clipped") or 0) or 0)
+    clipped = int(ingest_report.get("negatives_clipped") or 0)
+    if seen:
+        policy = (mapping or {}).get("negatives", {}).get("policy")
+        suspect = int((panel.row_status == "suspect").sum())
+        tail = ("" if clipped else
+                "; nothing was clipped, so those item-days are still negative in this panel")
+        add("info", "repair_negatives_clipped", None,
+            f"{seen} item-day(s) netted out negative -- a refund posted to a day with no "
+            f"offsetting sale; negatives.policy is {policy!r}, {clipped} row(s) were clipped "
+            f"to zero and {suspect} row(s) here carry row_status='suspect'{tail}", seen)
+
+    closures = ingest_report.get("closures_applied") or {}
+    if closures:
+        n = int(sum(int(v) for v in closures.values()))
+        counts = {k: int(v) for k, v in sorted(closures.items())}
+        add("info", "repair_closures_applied", None,
+            f"ingest stamped {n} row(s) from mapping.closures and the store hours file "
+            f"({counts}); those days were declared, not inferred from the sales looking wrong",
+            n)
+
+    for entry in ingest_report.get("files") or []:
+        dropped = int(entry.get("rows_in", 0)) - int(entry.get("rows_kept", 0))
+        if dropped <= 0:
+            continue
+        unmapped = entry.get("unmapped_codes") or {}
+        excluded = entry.get("excluded_codes") or {}
+        other = int(entry.get("rows_other_store", 0))
+        # ingest counts each dropped line under exactly one heading -- a subtotal row with
+        # neither a date nor an item number is a bad date and nothing else -- so these parts
+        # add up to the total. Parts that exceeded their own whole is not a page a store can
+        # reconcile its own report against.
+        parts = [f"{int(entry.get('rows_bad_date', 0))} with an unparseable date",
+                 f"{int(sum(unmapped.values()))} under an item code no mapping covers "
+                 f"({sorted(map(str, unmapped))[:5] or 'none'})",
+                 f"{int(sum(excluded.values()))} under a code items.exclude names "
+                 f"({sorted(map(str, excluded))[:5] or 'none'})"]
+        if other:
+            parts.append(f"{other} carrying another store's number")
+        add("info", "repair_rows_dropped", None,
+            f"{entry.get('role')}: {dropped} of {entry.get('rows_in')} raw line(s) never became "
+            "panel rows -- " + ", ".join(parts), dropped)
+
+    weather = ingest_report.get("weather") or {}
+    filled = int(weather.get("filled_days") or 0)
+    if filled:
+        add("info", "repair_weather_filled", None,
+            f"{filled} day(s) had no observation from the {weather.get('provider')!r} weather "
+            "provider and were filled from the days around them; tmax is interpolated and the "
+            "condition is carried forward, so those days are an estimate on a real reading",
+            filled)
 
 
 def _sellout(panel, items, mapping, add):
@@ -357,8 +518,9 @@ def _sellout(panel, items, mapping, add):
     if "none" in source or "unknown" in source:
         add("warning", "no_sellout_signal", None,
             f"sellout_source is {source}: the model fits the distribution of CENSORED SALES, "
-            "not demand, biasing the recommended quantity 1-8% low on the busiest days. That is "
-            "the safe direction and a supported mode -- do not compensate by inflating q*",
+            "not demand, biasing the recommended quantity low on the busiest days by an amount "
+            "nothing here measures. That is the safe direction and a supported mode -- do not "
+            "compensate by inflating q*",
             len(panel))
     if known_share < 1.0:
         add("warning", "sellout_coverage", None,
@@ -460,12 +622,18 @@ def _calendar_weather(panel, add):
             "hindcast with nothing to hindcast", 0)
 
 
-def validate(panel, items, mapping=None, strict=False, split_opts=None):
+def validate(panel, items, mapping=None, strict=False, split_opts=None, ingest_report=None):
     """Every check, run at once. Returns the report; raises only under strict.
 
     split_opts is the split mode the caller intends to train under -- see _split_preview.
+    ingest_report is ht.ingest's own report dict, and it is what makes the INFO block a
+    complete account of the repairs rather than only the ones the panel still shows. A caller
+    that ingested in this process need not pass it: ingest hangs it on the panel's .attrs,
+    which schema.conform below would otherwise drop.
     """
     schema.assert_no_truth(panel)
+    if ingest_report is None:
+        ingest_report = (getattr(panel, "attrs", None) or {}).get("ingest_report")
     findings = []
 
     def add(level, check, item, message, count):
@@ -480,9 +648,16 @@ def validate(panel, items, mapping=None, strict=False, split_opts=None):
                     item_census=pd.DataFrame(), gap_census=pd.DataFrame(), sellout={},
                     splits_preview={}, excluded_items_preview=[])
 
+    # the per-item floor moves with the split mode, exactly as features.spec_for_panel moves
+    # it: checking the 84-day floor on a run that asked for --allow-short refuses a panel the
+    # trainer would have accepted, and the floors table in the runbook would be fiction
+    min_item_days = (MIN_TRAIN_DAYS_SHORT if (split_opts or {}).get("allow_short")
+                     else MIN_ITEM_TRAIN_DAYS)
+
     _structural(panel, items, mapping, add)
     _quantities(panel, items, mapping, add)
-    _coverage(panel, items, mapping, add)
+    _coverage(panel, items, mapping, add, min_item_days=min_item_days)
+    _repairs(panel, mapping, ingest_report, add)
     sellout = _sellout(panel, items, mapping, add)
     _economics(panel, items, mapping, add)
     _calendar_weather(panel, add)
@@ -492,9 +667,10 @@ def validate(panel, items, mapping=None, strict=False, split_opts=None):
         add("error", "insufficient_history", None, splits["error"], splits.get("span_days", 0))
 
     census = item_census(panel, train_end=(pd.Timestamp(splits["train_end"])
-                                           if splits.get("train_end") else None))
+                                           if splits.get("train_end") else None),
+                         min_item_days=min_item_days)
     excluded = [dict(item=r["item"], open_train_days=int(r["open_train_days"]),
-                     required=MIN_ITEM_TRAIN_DAYS, reason=r["reason"])
+                     required=min_item_days, reason=r["reason"])
                 for _, r in census.iterrows() if r["status"] != "ok"]
     if len(excluded) == len(census) and len(census):
         add("error", "all_items_excluded", None,
@@ -506,6 +682,7 @@ def validate(panel, items, mapping=None, strict=False, split_opts=None):
         ok=not any(f.level == "error" for f in findings),
         findings=findings,
         counts=dict(rows=len(panel), items=int(panel.item.nunique()),
+                    stores=int(panel.store.nunique()),
                     dates=int(panel.date.nunique()), open_rows=len(open_rows),
                     row_status={k: int(v) for k, v in panel.row_status.value_counts().items()}),
         coverage=dict(
@@ -546,7 +723,8 @@ def format_report(report, width=100):
         c, cov = report["counts"], report["coverage"]
         lines.append(f"{report['date_range'][0]} .. {report['date_range'][1]}   "
                      f"{c['rows']} rows   {c['items']} items   {c['dates']} dates   "
-                     f"{c['open_rows']} open")
+                     f"{c['open_rows']} open"
+                     + (f"   {c['stores']} STORES" if c.get("stores", 1) > 1 else ""))
         lines.append(f"row_status {c['row_status']}")
         lines.append(f"coverage   open {cov['open_share']:.1%}  production "
                      f"{cov['produced_share']:.1%}  waste {cov['wasted_share']:.1%}  "
@@ -605,6 +783,9 @@ def main(argv=None):
     p.add_argument("--panel", required=True)
     p.add_argument("--items", required=True)
     p.add_argument("--mapping", default=None)
+    # Without it the INFO block can only show the repairs the panel still carries; ingest
+    # writes this file next to the panel precisely so the other half is not lost.
+    p.add_argument("--ingest-report", dest="ingest_report", default=None)
     p.add_argument("--strict", action="store_true")
     # The history floor depends on the split the caller intends, and the insufficient_history
     # message names these two flags -- so the command has to accept them, or it can only ever
@@ -626,7 +807,16 @@ def main(argv=None):
         print(f"cannot read {args.panel}: {exc}", file=sys.stderr)
         return 1
 
-    report = validate(panel, items, mapping,
+    ingest_report = None
+    if args.ingest_report:
+        try:
+            with open(args.ingest_report) as fh:
+                ingest_report = json.load(fh)
+        except (OSError, ValueError) as exc:
+            print(f"cannot read {args.ingest_report}: {exc}", file=sys.stderr)
+            return 1
+
+    report = validate(panel, items, mapping, ingest_report=ingest_report,
                       split_opts=dict(no_test=args.no_test, allow_short=args.allow_short))
     print(format_report(report, args.width))
     if args.json_out:

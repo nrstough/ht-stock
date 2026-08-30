@@ -14,6 +14,13 @@ it is reading.
 
 Every IngestError reads "<what is wrong> | <which mapping field would authorize the repair>",
 so the person holding a broken export is told what to change rather than shown a traceback.
+
+Two inputs come from outside the store's export and are named on the command line rather than
+in mapping.files. --logger-backup is the Phase-1 phone logger's own JSON backup, the only
+record of this store's waste from before the pilot and the "before" half of the before/after
+README's Phase 4 promises; a mapping.files role would need a new entry in ht.config's closed
+FILE_ROLES vocabulary, and it is not a file the store's system produced. --store picks one
+store's rows out of a movement report that was run for the whole district.
 """
 import argparse
 import collections
@@ -163,6 +170,20 @@ def parse_dates(s, fmt):
     return parsed, n_dropped
 
 
+BLANK_CODE = "(blank)"
+
+
+def _code_labels(codes):
+    """Raw item codes as report keys: always a string, "(blank)" for an empty cell.
+
+    pandas carries a missing value straight through .astype(str), and one float key among
+    strings breaks every sorted() and json.dump(sort_keys=True) that reads these reports --
+    a traceback on the page the store is handed, over a department subtotal line.
+    """
+    s = codes.astype("string").str.strip()
+    return s.mask(s.isna() | (s == ""), BLANK_CODE).to_numpy()
+
+
 def resolve_items(codes, descs, mapping):
     """Raw item codes -> canonical item keys, NaN where nothing maps.
 
@@ -223,8 +244,9 @@ def resolve_items(codes, descs, mapping):
             "items.random_weight_plu, otherwise raise items.max_items to accept a whole-"
             "department export whose other codes are dropped and counted")
 
-    # a code the mapping deliberately excludes is not the same finding as one nobody has seen
-    out.attrs["excluded_codes"] = dict(collections.Counter(raw[~keep]))
+    # a code the mapping deliberately excludes is not the same finding as one nobody has seen,
+    # and the caller counts them per row so the two buckets cannot overlap
+    out.attrs["excluded_mask"] = (~keep).to_numpy()
     out.attrs["unmapped_codes"] = len(unmapped)
     return out
 
@@ -418,12 +440,18 @@ def derive_sellout(panel, mapping, items, aux=None):
     return panel, report
 
 
-def ingest_logger_backup(path, items):
+def ingest_logger_backup(path, items, seen=None):
     """The Phase-1 logger's JSON backup -> a waste frame keyed by (item, date).
 
     The BACKUP, never the CSV export: buildCSV drops both the entry id and the item id, so two
     exports of the same log double-count every entry and an item renamed mid-pilot silently
     splits into two series. Both corruptions land straight on the baseline dollar figure.
+
+    `seen` is a shared set of entry ids, so that two backups off two phones -- or the same
+    phone's backup handed over twice under different filenames -- deduplicate against each
+    other rather than only within one file. Entries carrying no id at all are kept: the logger
+    always writes one, and collapsing a hand-edited file's id-less rows into a single entry
+    would quietly delete waste.
     """
     with open(path, "rb") as fh:
         try:
@@ -435,33 +463,180 @@ def ingest_logger_backup(path, items):
         raise IngestError(f"{path}: app is {data.get('app')!r}, expected 'ht-stock' | this is "
                           "the logger's JSON BACKUP, not its CSV export and not another file")
 
-    by_id, by_name = {}, {}
+    # The logger's item id is matched FIRST and against the items config's own keys, because
+    # index.html ships those keys as its default item ids; the display name is the fallback
+    # for an item somebody added on the phone, exactly as in resolve_items.
+    by_name = {}
+    for key, it in items.items():
+        by_name[key.strip().lower()] = key
+        by_name[str(it["name"]).strip().lower()] = key
+    by_id = {}
     for rec in data.get("items", []):
-        name = str(rec.get("name", "")).strip().lower()
-        for key, it in items.items():
-            if name and name in (key.lower(), str(it["name"]).strip().lower()):
-                by_id[rec.get("id")] = key
-                by_name[name] = key
-    seen, rows, unmapped = set(), [], collections.Counter()
+        key = (by_name.get(str(rec.get("id", "")).strip().lower())
+               or by_name.get(str(rec.get("name", "")).strip().lower()))
+        if key is not None:
+            by_id[rec.get("id")] = key
+
+    seen = set() if seen is None else seen
+    rows, unmapped, dupes, bad_dates = [], collections.Counter(), 0, 0
     for log in data.get("logs", []):
-        if log.get("id") in seen:
-            continue                          # a second export of the same device's log
-        seen.add(log.get("id"))
-        key = by_id.get(log.get("itemId")) or by_name.get(
-            str(log.get("itemName", "")).strip().lower())
+        entry_id = log.get("id")
+        if entry_id is not None:
+            if entry_id in seen:
+                dupes += 1
+                continue                      # a second export of the same device's log
+            seen.add(entry_id)
+        key = (by_id.get(log.get("itemId"))
+               or by_name.get(str(log.get("itemId", "")).strip().lower())
+               or by_name.get(str(log.get("itemName", "")).strip().lower()))
         if key is None:
             unmapped[str(log.get("itemName"))] += 1
             continue
-        rows.append((key, pd.Timestamp(log["date"]).normalize(), float(log.get("qty", 0.0))))
+        # the logger writes an <input type=date>, so this is ISO or it is hand-edited
+        day = pd.to_datetime(log.get("date"), errors="coerce")
+        if pd.isna(day):
+            bad_dates += 1
+            continue
+        qty = float(log.get("qty") or 0.0)
+        if qty < 0:
+            # a logged markout is a physical count of what was thrown away; a negative one is
+            # a hand edit, and folding it in silently subtracts from the Phase-1 baseline the
+            # whole before/after is measured against
+            raise IngestError(
+                f"{path}: {key} on {day.date()} carries qty {qty} | a logger entry is a count "
+                "of what was thrown away, so a negative is a correction somebody has to settle "
+                "in the backup before it can be folded into the waste baseline")
+        rows.append((key, day.normalize(), qty))
     out = pd.DataFrame(rows, columns=["item", "date", "wasted"])
     out = out.groupby(["item", "date"], as_index=False)["wasted"].sum()
     out.attrs["unmapped_logger_items"] = dict(unmapped)
+    out.attrs["entries_used"] = len(rows)
+    out.attrs["duplicate_entries"] = dupes
+    out.attrs["unparsed_dates"] = bad_dates
     return out
+
+
+def _logger_waste(paths, items, store, report):
+    """Every logger backup, as one (store, item, date, wasted) frame, plus what was lost.
+
+    Several paths because the log lives on a phone: two people logging is two devices and two
+    backups, and every entry id is unique per device, so the union deduplicates correctly.
+
+    A backup that matches nothing is refused rather than folded in as zero waste. The whole
+    reason to read this file is that README's Phase 4 promises a measured before/after against
+    the Phase-1 baseline, and a silently empty baseline is how that promise turns into a
+    number nobody can check.
+    """
+    seen, frames = set(), []
+    unmapped, entries, dupes, bad_dates = collections.Counter(), 0, 0, 0
+    for path in paths:
+        if not os.path.exists(path):
+            raise IngestError(f"{path}: no such file | --logger-backup takes the JSON the "
+                              "logger's Setup > Data > Download backup button writes")
+        frame = ingest_logger_backup(path, items, seen)
+        unmapped.update(frame.attrs["unmapped_logger_items"])
+        entries += frame.attrs["entries_used"]
+        dupes += frame.attrs["duplicate_entries"]
+        bad_dates += frame.attrs["unparsed_dates"]
+        frames.append(frame)
+    out = pd.concat(frames, ignore_index=True).groupby(
+        ["item", "date"], as_index=False)["wasted"].sum()
+    if not len(out):
+        raise IngestError(
+            f"{list(paths)}: none of the {entries + sum(unmapped.values())} logged entries "
+            f"matched a configured item -- the names in the backup are "
+            f"{_samples(sorted(unmapped)) or '(none)'} | rename the logger's items to the items "
+            "config's keys or `name` fields, or drop --logger-backup. Folding in an empty "
+            "baseline would leave the Phase-1 before/after measuring nothing")
+    out.insert(0, "store", str(store))
+    report["logger"] = dict(
+        paths=list(paths), entries_used=entries, duplicate_entries=dupes,
+        unparsed_dates=bad_dates, unmapped_items=dict(unmapped.most_common(20)),
+        unmapped_entries=int(sum(unmapped.values())),
+        date_range=[str(out.date.min().date()), str(out.date.max().date())],
+        items=sorted(out.item.unique()))
+    return out
+
+
+def _apply_logger_waste(panel, logged, measured, report):
+    """Fold the logger's markouts into `wasted`, never adding to the export's own record.
+
+    The logger is a measurement -- somebody stood at the case and typed it in -- so it outranks
+    `produced - sold`, which is arithmetic on a label-printer proxy. It does not outrank a waste
+    column the export supplied, and it is never added to one: two independent records of the
+    same markout, summed, doubles precisely the number the pilot is judged on. Those collisions
+    keep the export's figure and are reported with both, for a person to settle.
+    """
+    key = list(schema.KEY)
+    aligned = panel[key].merge(logged.rename(columns={"wasted": "__logged"}),
+                               on=key, how="left")["__logged"].to_numpy(dtype=float)
+    have = ~np.isnan(aligned)
+    fill, conflict = have & ~measured, have & measured
+
+    wasted = panel["wasted"].to_numpy(dtype=float, copy=True)
+    info = report["logger"]
+    info["item_days_written"] = int(fill.sum())
+    info["units_written"] = round(float(aligned[fill].sum()), 3)
+    info["conflicts_with_export"] = int(conflict.sum())
+    if conflict.any():
+        info["conflict_items"] = {k: int(v) for k, v in
+                                  panel.loc[conflict, "item"].value_counts().sort_index().items()}
+        info["conflict_units"] = dict(logged=round(float(aligned[conflict].sum()), 3),
+                                      export=round(float(np.nansum(wasted[conflict])), 3))
+
+    # a logged item-day the export's grid never covers cannot be folded in at all: it would
+    # have to invent a panel row with no sales, so it is counted and named instead
+    outside = (logged.merge(panel[key], on=key, how="left", indicator=True)["_merge"]
+               == "left_only").to_numpy()
+    info["item_days_outside_the_export"] = int(outside.sum())
+    if outside.any():
+        info["units_outside_the_export"] = round(float(logged.loc[outside, "wasted"].sum()), 3)
+        info["outside_examples"] = [f"{i} {d.date()}" for i, d in
+                                    zip(logged.loc[outside, "item"].head(5),
+                                        logged.loc[outside, "date"].head(5))]
+
+    wasted[fill] = aligned[fill]
+    panel = panel.copy()
+    panel["wasted"] = wasted
+    return panel
 
 
 # ---- the pipeline ----
 
-def _tidy(mapping, role, items, root, report):
+def _select_store(frame, role, want, report):
+    """One store's rows, or a refusal that names the store numbers the file actually holds.
+
+    An item movement report is routinely run for a whole district, and mapping.store stamps a
+    single store number on every row it reads, so without this the five stores in a district
+    export are summed into one series under one store's name -- and ht.validate's multi_store
+    check cannot see it, because by then the panel carries exactly one store. Mapping
+    columns.<role>.store is what turns that silent sum into a question, and --store answers it.
+    """
+    if not len(frame):
+        return frame                          # let "no sales rows survived reading" say it
+    seen = collections.Counter(frame["store"])
+    stores = report["stores"]
+    stores["seen"].update({str(k): int(v) for k, v in seen.items()})
+    if want is None:
+        if len(seen) > 1:
+            raise IngestError(
+                f"role {role!r}: the export covers {len(seen)} store numbers -- "
+                f"{_samples(sorted(seen))} | pass --store <number> to keep one of them. v1 "
+                "forecasts one store and every module below ingest keys on item alone, so "
+                "leaving them merged would sum the district onto one store's series")
+        return frame
+    keep = (frame["store"] == str(want).strip()).to_numpy()
+    if not keep.any():
+        raise IngestError(
+            f"role {role!r}: --store {want!r} matches none of this file's {len(seen)} store "
+            f"number(s) -- {_samples(sorted(seen))} | check the leading zeros, or map "
+            f"columns.{role}.store if the store number lives in a column this mapping does not "
+            "name yet")
+    stores["rows_dropped"] += int((~keep).sum())
+    return frame[keep]
+
+
+def _tidy(mapping, role, items, root, report, store=None):
     """One raw role -> store/item/date plus that role's measures, deduplicated."""
     raw = read_raw(mapping, role, root)
     if raw is None:
@@ -474,20 +649,34 @@ def _tidy(mapping, role, items, root, report):
     rows_in = len(raw)
     key = resolve_items(raw[cols["item_code"]],
                         raw[cols.get("item_desc")] if cols.get("item_desc") else None, mapping)
-    excluded = key.attrs.get("excluded_codes", {})
-    unmapped = collections.Counter(
-        raw.loc[key.isna(), cols["item_code"]].astype(str).str.strip())
-    for code, n in excluded.items():
-        unmapped.pop(code, None)
-    if key.isna().any() and not mapping["items"]["drop_unmapped"]:
-        raise IngestError(
-            f"{role}: {int(key.isna().sum())} row(s) carry item codes with no mapping -- "
-            f"{_samples(sorted(unmapped)[:5])} | add them to items.map or items.exclude, or set "
-            "items.drop_unmapped true to drop them and have the count reported instead")
     dates, n_bad = parse_dates(raw[cols["date"]], _date_format(mapping, role))
 
+    # Each dropped raw line is counted in exactly ONE bucket, so the decomposition the
+    # validation page prints adds up to its own total: a department subtotal row carries
+    # neither a date nor an item number, and counting it in both made the parts exceed the
+    # whole on the one document whose argument is that its numbers are checkable.
+    codes = _code_labels(raw[cols["item_code"]])
+    excl = key.attrs["excluded_mask"]
+    unresolved = key.isna().to_numpy() & ~excl
+    datok = dates.notna().to_numpy()
+    excluded = dict(collections.Counter(codes[excl & datok]))
+    unmapped = collections.Counter(codes[unresolved & datok])
+    if unresolved.any() and not mapping["items"]["drop_unmapped"]:
+        raise IngestError(
+            f"{role}: {int(unresolved.sum())} row(s) carry item codes with no mapping -- "
+            f"{_samples(sorted(set(codes[unresolved]))[:5])} | add them to items.map or "
+            "items.exclude, or set items.drop_unmapped true to drop them and have the count "
+            "reported instead")
+
     num = mapping["numbers"]
-    frame = pd.DataFrame({"store": str(mapping["store"]), "item": key, "date": dates})
+    # A file with no store column is that store's file, so it takes the selected number when
+    # there is one: stamping mapping.store there instead would key the production and waste
+    # rows to a store the filtered sales rows no longer use, and they would all merge to NaN.
+    if cols.get("store"):
+        who = raw[cols["store"]].astype(str).str.strip()
+    else:
+        who = pd.Series(str(store if store is not None else mapping["store"]), index=raw.index)
+    frame = pd.DataFrame({"store": who, "item": key, "date": dates})
     for measure, mapped in ROLE_MEASURES[role].items():
         header = cols.get(mapped)
         if header:
@@ -499,12 +688,14 @@ def _tidy(mapping, role, items, root, report):
     if "row_cost" in frame and mapping["price_cost"]["cost_basis"] == "per_unit":
         frame["row_cost"] = frame["row_cost"] * frame["sold"]
     frame = frame[frame["item"].notna() & frame["date"].notna()]
+    readable = len(frame)
+    frame = _select_store(frame, role, store, report)
     before = len(frame)
     frame = aggregate(frame, mapping["dedupe"]["policy"], mapping["dedupe"]["key"])
     report["files"].append(dict(
         path=sorted(set(raw["__source"])), role=role, rows_in=rows_in, rows_kept=int(before),
-        rows_bad_date=n_bad, unmapped_codes=dict(unmapped.most_common(20)),
-        excluded_codes=excluded))
+        rows_bad_date=n_bad, rows_other_store=int(readable - before),
+        unmapped_codes=dict(unmapped.most_common(20)), excluded_codes=excluded))
     report["duplicates_collapsed"] += int(before - len(frame))
     return frame
 
@@ -548,8 +739,55 @@ def _apply_negatives(panel, mapping, report):
     elif policy not in ("clip_zero", "error", "keep"):
         raise IngestError(f"negatives.policy is {policy!r} | expected 'clip_zero', 'error' "
                           "or 'keep'")
-    report["negatives_clipped"] = int(neg.sum())
+    # two numbers, because they are two facts: how many item-days netted out negative, and
+    # how many rows this run actually changed. Under policy 'keep' the second is zero, and a
+    # field called negatives_clipped that counts untouched rows is a lie a reader cannot see.
+    report["negatives_seen"] = int(neg.sum())
+    report["negatives_clipped"] = int(neg.sum()) if policy == "clip_zero" else 0
     return panel
+
+
+def _check_imputed_costs(items, mapping):
+    """Re-derive every cost_imputed item's cost from its department gross margin, or refuse.
+
+    ht.config REQUIRES a cost on every item, so a store that cannot give one writes
+    price * (1 - margin) into the items file by hand and sets cost_imputed. That made
+    items.dept_gross_margin a field nothing read and cost_imputed a flag nothing checked:
+    a typed-in 2.10 and a derived 3.36 look identical, and the difference is the whole
+    critical fractile. This redoes the arithmetic and refuses a disagreement, and returns
+    the margin behind each cost so every dollar figure downstream can print the assumption
+    instead of asserting it.
+    """
+    margins = mapping["items"].get("dept_gross_margin") or {}
+    out, problems = {}, []
+    for key in sorted(items):
+        it = items[key]
+        if not it.get("cost_imputed"):
+            continue
+        margin = margins.get(it["dept"])
+        if margin is None:
+            problems.append(f"{key} is flagged cost_imputed but items.dept_gross_margin has no "
+                            f"entry for department {it['dept']!r}")
+            continue
+        margin = float(margin)
+        if not 0.0 < margin < 1.0:
+            problems.append(f"items.dept_gross_margin[{it['dept']!r}] is {margin}: a gross "
+                            "margin is a fraction, so 62% is 0.62")
+            continue
+        implied = round(float(it["price"]) * (1.0 - margin), 2)
+        if abs(float(it["cost"]) - implied) > 0.01:
+            problems.append(f"{key}: cost {it['cost']} is flagged cost_imputed, but a "
+                            f"{margin:.0%} margin on price {it['price']} gives {implied}")
+            continue
+        out[key] = dict(dept=it["dept"], margin=margin, price=float(it["price"]),
+                        cost=float(it["cost"]), derived_cost=implied)
+    if problems:
+        raise IngestError(
+            "; ".join(problems) + " | fix items.dept_gross_margin in the mapping, or the item's "
+            "cost, or clear cost_imputed if the store gave you a real cost. An imputed cost no "
+            "margin reproduces is a number nobody can check, and it sets that item's "
+            "recommended quantity and every dollar quoted for it")
+    return out
 
 
 def _economics(panel, items, mapping, report):
@@ -575,10 +813,9 @@ def _economics(panel, items, mapping, report):
         panel["unit_cost"] = realized_cost.fillna(cost)
     else:
         panel["unit_cost"] = cost
-    # mapping.items.dept_gross_margin is advisory: ht.config REQUIRES a cost on every item, so
-    # a margin can only ever have been used to FILL that config by hand. Whoever did that sets
-    # cost_imputed, and it is reported here so every dollar figure downstream can say so.
-    report["cost_imputed_items"] = sorted(k for k, it in items.items() if it.get("cost_imputed"))
+    imputed = _check_imputed_costs(items, mapping)
+    report["cost_imputation"] = imputed
+    report["cost_imputed_items"] = sorted(imputed)
 
     tol = float(mapping["price_cost"]["tolerance_pct"])
     divergences = {}
@@ -611,16 +848,33 @@ def _overrun_report(panel, items):
     return {k: int(v) for k, v in panel.loc[over, "item"].value_counts().sort_index().items()}
 
 
-def ingest(mapping, items, root=".", weather=None):
+def ingest(mapping, items, root=".", weather=None, store=None, logger_backups=()):
     """Raw export -> (canonical panel, report). The whole path, in one fixed order."""
-    report = dict(files=[], duplicates_collapsed=0, negatives_clipped=0,
+    report = dict(files=[], duplicates_collapsed=0, negatives_seen=0, negatives_clipped=0,
                   items_dropped={}, grid_rows_inserted={}, closures_applied={},
-                  price_divergences={}, holiday_collisions=[])
+                  price_divergences={}, holiday_collisions=[],
+                  stores=dict(selected=store, seen=collections.Counter(), rows_dropped=0))
 
-    sales = _tidy(mapping, "sales", items, root, report)
+    # --store filters on a store column. With none mapped, _tidy stamps the number on every
+    # row instead, so --store would silently RELABEL this export as a different store: the
+    # panel, the checkpoint's meta.json and every dollar figure below would be attributed to a
+    # store whose sales they do not contain, and nothing downstream could detect it.
+    if store is not None and not any((mapping["columns"].get(role) or {}).get("store")
+                                     for role in mapping["columns"]):
+        raise IngestError(
+            f"--store {store!r} was given but no columns.<role>.store is mapped, so there is "
+            f"nothing to filter on and every row would simply be stamped {store!r} | map the "
+            f"raw header carrying the store number, or drop --store: this export already "
+            f"carries whatever mapping.store names ({mapping['store']!r})")
+
+    sales = _tidy(mapping, "sales", items, root, report, store)
     if sales is None or not len(sales):
         raise IngestError("no sales rows survived reading | check mapping.files paths, "
                           "date.format, and whether items.map covers this export's item codes")
+    # one store by construction, and the number the sales rows actually carry rather than the
+    # one mapping.store names: every later role has to join on the same key or merge to nothing
+    store = str(sales["store"].iloc[0])
+    report["stores"]["selected"] = store
 
     sales["row_status"] = "ok"
     sales = _apply_negatives(sales, mapping, report)
@@ -630,7 +884,7 @@ def ingest(mapping, items, root=".", weather=None):
     report["closures_applied"] = panel.attrs.get("closures_applied", {})
 
     for role in ("production", "waste"):
-        side = _tidy(mapping, role, items, root, report)
+        side = _tidy(mapping, role, items, root, report, store)
         if side is None:
             continue
         panel = panel.merge(side, on=list(schema.KEY), how="left", suffixes=("", "_side"))
@@ -639,14 +893,32 @@ def ingest(mapping, items, root=".", weather=None):
     if "produced" not in panel.columns:
         panel["produced"] = np.nan
 
+    # which waste cells are the STORE'S OWN record, fixed before anything derives or fills one
+    measured = panel["wasted"].notna().to_numpy()
+
     # wasted = produced - sold is valid ONLY for a day-fresh item; for anything with a shelf
     # life the identity is simply false and deriving it would manufacture the headline number.
-    if not panel["wasted"].notna().any() and panel["produced"].notna().any():
+    # The precedence is per CELL, as the contract states it: a shrink report that covers one
+    # department, or six months, must not switch the identity off for the rest of the panel.
+    if panel["produced"].notna().any():
         fresh = panel["item"].map({k: it["shelf_life_days"] == 1 for k, it in items.items()})
         # clipped at zero: a proxy production count (a label log, a clipboard) undercounts,
         # and negative waste would quietly subtract from the measured baseline
         derived = (panel["produced"].astype(float) - panel["sold"].astype(float)).clip(lower=0.0)
-        panel["wasted"] = derived.where(fresh.fillna(False) & panel["produced"].notna())
+        derived = derived.where(fresh.fillna(False) & panel["produced"].notna())
+        panel["wasted"] = panel["wasted"].where(measured, derived)
+
+    if logger_backups:
+        logged = _logger_waste(logger_backups, items, store, report)
+        panel = _apply_logger_waste(panel, logged, measured, report)
+
+    # which record each waste cell came from, because a mixed column is a mixed claim: the
+    # export's own cells are measured, the derived ones are arithmetic on a production count
+    logged_cells = int(report.get("logger", {}).get("item_days_written", 0))
+    report["waste_cells"] = dict(
+        export=int(measured.sum()), logger=logged_cells,
+        derived=int(panel["wasted"].notna().sum()) - int(measured.sum()) - logged_cells)
+
     report["production_overruns"] = _overrun_report(panel, items)
 
     extra = ht_calendar.load_extra_holidays(mapping["calendar"]["extra_holidays_csv"]) \
@@ -697,11 +969,43 @@ def _summary(report):
     lines.append(f"  dates      {report['date_range'][0]} .. {report['date_range'][1]}  "
                  f"({report['n_days']} days, {len(report['items_kept'])} items)")
     lines.append(f"  repairs    duplicates collapsed {report['duplicates_collapsed']}  "
-                 f"negatives clipped {report['negatives_clipped']}  "
+                 f"negatives {report['negatives_seen']} seen / "
+                 f"{report['negatives_clipped']} clipped  "
                  f"grid rows inserted {sum(report['grid_rows_inserted'].values())}")
+    w = report.get("waste_cells")
+    if w:
+        lines.append(f"  waste      {w['export']} cell(s) the export reported, {w['logger']} "
+                     f"from the logger, {w['derived']} derived as produced - sold "
+                     "(day-fresh items only)")
     lines.append(f"  row_status {report['row_status_counts']}")
     if report["items_dropped"]:
         lines.append(f"  dropped    {report['items_dropped']}")
+    st = report["stores"]
+    if len(st["seen"]) > 1 or st["rows_dropped"]:
+        lines.append(f"  stores     kept {st['selected']} of {dict(st['seen'])}  "
+                     f"rows dropped {st['rows_dropped']}")
+    g = report.get("logger")
+    if g:
+        lines.append(f"  logger     {g['entries_used']} entries from {len(g['paths'])} backup(s)"
+                     f"  {g['date_range'][0]} .. {g['date_range'][1]}  -> "
+                     f"{g['item_days_written']} item-days, {g['units_written']} units of waste")
+        if g["unmapped_items"]:
+            lines.append(f"    NOT MATCHED to any configured item, {g['unmapped_entries']} "
+                         f"entries dropped: {g['unmapped_items']}")
+        if g["conflicts_with_export"]:
+            lines.append(f"    {g['conflicts_with_export']} item-day(s) the export already "
+                         f"reported waste for: kept the export's {g['conflict_units']['export']} "
+                         f"units, ignored the logger's {g['conflict_units']['logged']}")
+        if g["item_days_outside_the_export"]:
+            lines.append(f"    {g['item_days_outside_the_export']} logged item-day(s) are outside "
+                         f"the export's grid and fold in nowhere: {g['outside_examples']}")
+        if g["duplicate_entries"] or g["unparsed_dates"]:
+            lines.append(f"    {g['duplicate_entries']} repeated entry id(s) counted once, "
+                         f"{g['unparsed_dates']} entries with an unreadable date dropped")
+    for key, c in sorted(report.get("cost_imputation", {}).items()):
+        lines.append(f"  COST IMPUTED {key}: cost {c['cost']:.2f} is price {c['price']:.2f} x "
+                     f"(1 - {c['margin']:.0%} {c['dept']} margin), not the store's own number -- "
+                     "every dollar quoted for it rests on that margin")
     s = report["sellout"]
     lines.append(f"  sellout    rule {s['rule']}  rate {s['rate']}  known_share "
                  f"{s['known_share']}  unknown days {s['unknown_days']}")
@@ -727,6 +1031,14 @@ def main(argv=None):
     p.add_argument("--out", default="data/panel.csv")
     p.add_argument("--report", default=None)
     p.add_argument("--sellout-rule", default=None, choices=list(SELLOUT_RULES))
+    p.add_argument("--store", default=None,
+                   help="keep only this store number, for a report run for the whole district; "
+                        "needs columns.<role>.store mapped to the raw header carrying it")
+    p.add_argument("--logger-backup", dest="logger_backups", action="append", default=[],
+                   metavar="PATH",
+                   help="a Phase-1 logger JSON backup (index.html, Setup > Data > Download "
+                        "backup), folded into the panel's waste column. Repeatable: one per "
+                        "phone that logged")
     p.add_argument("--from", dest="date_from", default=None)
     p.add_argument("--to", dest="date_to", default=None)
     p.add_argument("--dry-run", action="store_true")
@@ -747,7 +1059,8 @@ def main(argv=None):
         mapping["sellout"]["rule"] = args.sellout_rule
 
     try:
-        panel, report = ingest(mapping, items, root=args.root)
+        panel, report = ingest(mapping, items, root=args.root, store=args.store,
+                               logger_backups=args.logger_backups)
     except schema.HtError as exc:
         print(f"ingest failed: {exc}", file=sys.stderr)
         return 1
@@ -765,15 +1078,17 @@ def main(argv=None):
 
     if not args.quiet:
         print(_summary(report))
-    if args.report:
-        os.makedirs(os.path.dirname(os.path.abspath(args.report)), exist_ok=True)
-        with open(args.report, "w") as fh:
-            json.dump(report, fh, indent=1, sort_keys=True, default=str)
+    # the panel first: everything after this can still fail, and a panel on disk is what the
+    # runbook's recovery ("re-run ht.validate against it") needs in order to exist
     if not args.dry_run:
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
         schema.write_panel(panel, args.out)
         if not args.quiet:
             print(f"\nwrote {args.out}  ({len(panel)} rows)")
+    if args.report:
+        os.makedirs(os.path.dirname(os.path.abspath(args.report)), exist_ok=True)
+        with open(args.report, "w") as fh:
+            json.dump(report, fh, indent=1, sort_keys=True, default=str)
 
     result = ht_validate.validate(panel, items, mapping)
     if not args.quiet:

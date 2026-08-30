@@ -76,6 +76,14 @@ class SpecMismatch(ValueError):
     """A checkpoint's recorded feature spec does not match the one just built."""
 
 
+class BlankStoreCells(ValueError):
+    """Some rows carry no store number at all, which no re-run of a one-store report fixes."""
+
+
+class MultiStorePanel(ValueError):
+    """The panel carries more than one store number, so item series would interleave."""
+
+
 def legacy_spec():
     """The exact feature configuration model/artifacts/demandnet.pt was trained with.
 
@@ -177,7 +185,114 @@ def spec_hash(spec):
     return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
 
 
+def spec_refusal(panel, auto_note):
+    """The message every CLI prints when a --panel arrives with no --spec.
+
+    One text, because the legacy paragraph is a statement of fact about
+    model/artifacts/demandnet.pt and two copies of it would eventually disagree.
+    `auto_note` is the half that legitimately differs: model.train validates the
+    panel and honours the split flags before deriving, model.backtest only derives.
+
+    Defaulting to the derived spec would fix the panel in front of us and keep the
+    shape of the failure -- a split nobody chose. So the run stops and names both.
+    """
+    lg = legacy_spec()
+    return (
+        f"--panel {panel} was given without --spec. The split is not a detail: it decides "
+        "what the model fits, what early stopping judges, and what any later accuracy "
+        "number covers. Name one:\n"
+        f"  --spec auto    {auto_note}\n"
+        f"  --spec legacy  the frozen boundaries train_end {lg['train_end']}, val_start "
+        f"{lg['val_start']}, test_start {lg['test_start']}, holiday countdown off, "
+        "statistics fitted over train+val. Correct only for the simulator's own panel, "
+        "because that is what model/artifacts/demandnet.pt was trained with.")
+
+
+AUTO_NOTE_DERIVE = ("derive train/val/test from this panel's own date range and z-score on "
+                    "the train window alone. This is what a store's export wants.")
+AUTO_NOTE_VALIDATE = ("validate this panel, then " + AUTO_NOTE_DERIVE)
+
+
+def spec_fit_problems(spec, df):
+    """Where a panel falls outside the configuration `spec` describes.
+
+    A spec is not just boundaries: it pins the trend origin and denominator and the
+    one-hot vocabularies. Scoring a 2026 export with the legacy spec feeds a trend
+    covariate near 1.4 to a network that never saw a value above 1.0, and an unseen
+    weather kind raises ValueError halfway down a morning sheet. Both are silent until
+    they are not, so they are named here in the panel's own numbers.
+    """
+    d = pd.to_datetime(df["date"])
+    lo, hi = d.min(), d.max()
+    out = []
+
+    if spec.get("include_trend"):
+        origin = pd.Timestamp(spec["trend_start"])
+        denom = float(spec["trend_days"])
+        first = (lo - origin).days / denom
+        last = (hi - origin).days / denom
+        if first < -0.01 or last > 1.01:
+            out.append(
+                f"the trend covariate runs {first:.2f}..{last:.2f} on this panel; the spec "
+                f"counts from {origin.date()} over {denom:.0f} days, so training only ever "
+                "showed the network 0..1")
+
+    if spec.get("unknown_vocab") == "raise":
+        kinds = set(df.get("weather", pd.Series(dtype=str)).astype(str)) - {"nan"}
+        stray = sorted(kinds - set(spec["weather_kinds"]))
+        if stray:
+            out.append(f"weather kind(s) {stray} are not in the spec's vocabulary "
+                       f"{spec['weather_kinds']}, and it is set to raise on an unknown value")
+        hols = {str(h) for h in df.get("holiday", pd.Series(dtype=str)).fillna("") if str(h)}
+        stray = sorted(hols - set(spec["holiday_names"]) - {"nan"})
+        if stray:
+            out.append(f"holiday name(s) {stray} are not in the spec's vocabulary, and it is "
+                       "set to raise on an unknown value")
+
+    if not (d <= pd.Timestamp(spec["train_end"])).any():
+        out.append(f"no row is on or before train_end {spec['train_end']}, so every row this "
+                   f"panel holds ({lo.date()}..{hi.date()}) is scored as held-out")
+    elif spec["test_start"] and not (d >= pd.Timestamp(spec["test_start"])).any():
+        out.append(f"no row is on or after test_start {spec['test_start']}, so there is no "
+                   "held-out window on this panel at all")
+    return out
+
+
+def spec_from_meta(meta, df, artifacts_dir="the artifacts directory"):
+    """The spec to score `df` with, or a refusal that says the spec was assumed.
+
+    Scoring must use the layout the checkpoint was trained on, never one re-derived from
+    today's frame. meta.json records that layout -- except for the frozen checkpoint, which
+    predates the field. There the legacy spec is an ASSUMPTION, right for the simulator's own
+    panel and arbitrary for a store's export, and until now it was substituted in silence.
+    So when there is nothing recorded, the assumption is checked against the panel and the
+    run stops if it does not hold.
+    """
+    if "spec" in meta:
+        return meta["spec"]
+    spec = legacy_spec()
+    problems = spec_fit_problems(spec, df)
+    if not problems:
+        return spec
+    raise SpecMismatch(
+        f"{artifacts_dir}/meta.json records no feature spec, so scoring it means ASSUMING the "
+        f"legacy layout -- train_end {spec['train_end']}, val_start {spec['val_start']}, "
+        f"test_start {spec['test_start']}, holiday countdown off, trend counted from "
+        f"{spec['trend_start']} over {spec['trend_days']:.0f} days. That assumption does not "
+        "hold on this panel:\n"
+        + "\n".join(f"  - {p}" for p in problems)
+        + "\n\nThose are the simulator's own dates. Train a checkpoint against this panel "
+        "(`python -m model.train --panel <panel> --spec auto --artifacts <dir>`) and score "
+        "with that one; its meta.json records its spec instead of leaving it to be guessed.")
+
+
+class PanelNotFound(FileNotFoundError):
+    """A --panel path that is not there, named in one line instead of a pandas traceback."""
+
+
 def load(path=DATA):
+    if not os.path.isfile(path):
+        raise PanelNotFound(f"no panel csv at {path}")
     df = pd.read_csv(path)
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values(["item", "date"]).reset_index(drop=True)
@@ -427,6 +542,42 @@ def _item_guard(df, spec, stats):
     return kept, excluded
 
 
+def _assert_one_store(df):
+    """Refuse a district export before it becomes an item series with two rows per date.
+
+    Nothing below ingest keys on store: grouping by item alone puts one row per store on
+    every date, so the context window reaches back a fraction of the calendar days it claims
+    and the per-item floor counts rows a single store never had. ht.validate raises the same
+    error, but a panel can reach build() without passing through it, and by then the symptom
+    is a history complaint about a panel that is long enough.
+    """
+    if "store" not in df.columns:
+        return                        # the simulator's CSV has no store column
+    stores = df["store"].unique()
+    # An empty store cell is not a second store, and diagnosing it as one sends somebody to
+    # re-run a district report for one store -- a remedy that cannot fill a blank cell.
+    blank = [s for s in stores if pd.isna(s) or str(s).strip() in ("", "nan", "default")]
+    real = [s for s in stores if s not in blank and not pd.isna(s)]
+    if blank and len(real) == 1:
+        n = int(df["store"].isna().sum()
+                + df["store"].astype("string").str.strip().isin(["", "nan", "default"]).sum())
+        raise BlankStoreCells(
+            f"{n} of {len(df)} rows carry no store number, beside {len(real)} real one(s) "
+            f"({sorted(map(str, real))}). That is a hole in the store column, not a district "
+            "export: fill it in the raw file, or drop the column and let mapping.store name "
+            "the store. Re-running the movement report for one store will not change it.")
+    if len(stores) > 1:
+        names = sorted(str(s) for s in stores)
+        named = ", ".join(repr(s) for s in names[:6])
+        more = "" if len(names) <= 6 else f", and {len(names) - 6} more"
+        raise MultiStorePanel(
+            f"panel carries {len(names)} store numbers -- {named}{more}. v1 forecasts one "
+            f"store and everything below ingest keys on item alone, so each item's series "
+            f"would hold {len(names)} rows per date and the {CONTEXT_DAYS}-row context window "
+            f"would reach back roughly {CONTEXT_DAYS // len(names)} calendar days rather than "
+            f"{CONTEXT_DAYS}. " + schema.ONE_STORE_REMEDY)
+
+
 def build(df=None, spec=None, path=None, stats=None):
     """Returns dict with tensorless numpy arrays for train/val/test splits.
 
@@ -437,6 +588,7 @@ def build(df=None, spec=None, path=None, stats=None):
     from_default = df is None
     if df is None:
         df = load(path or DATA)
+    _assert_one_store(df)
     spec = _resolve_spec(df, spec, from_default)
 
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
@@ -601,7 +753,10 @@ def main(argv=None):
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
-    df = load(args.panel) if args.panel else None
+    try:
+        df = load(args.panel) if args.panel else None
+    except PanelNotFound as exc:
+        raise SystemExit(f"--panel: {exc}")
     spec = None
     if args.spec == "legacy":
         spec = legacy_spec()

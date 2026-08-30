@@ -1,12 +1,22 @@
 """Generate the synthetic store dataset.
 
-Run:  python -m sim.generate
+Run:  python -m sim.generate --out .rehearsal/store_synth.csv
 
-Writes data/store_synth.csv with one row per item per day. Columns a real
-store could observe are the first group; `true_demand`, `lost_sales`, and
-`true_mean` exist only because this is a simulation and are used solely for
-scoring policies, never for training.
+Writes one row per item per day. Columns a real store could observe are the
+first group; `true_demand`, `lost_sales`, and `true_mean` exist only because
+this is a simulation and are used solely for scoring policies, never for
+training.
+
+It refuses to overwrite data/store_synth.csv without --force-frozen, for the
+same reason model/train.py refuses to write into model/artifacts/: those bytes
+are provenance. results/results.json, the checkpoint and every dollar figure in
+the proposal are settled against that one file, and a re-run that lands on it --
+after a params change, on another numpy, or by simply typing the default -- moves
+the ground under all of them silently. The seed is fixed, so a clean re-run into
+a scratch path and `cmp` against the frozen file is the check that this
+generator still produces it.
 """
+import argparse
 import datetime as dt
 import os
 
@@ -24,7 +34,24 @@ def daterange(start, end):
         d += dt.timedelta(days=1)
 
 
-def main():
+FROZEN = os.path.join(os.path.dirname(__file__), "..", "data", "store_synth.csv")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="generate the synthetic store dataset")
+    ap.add_argument("--out", default=FROZEN, help="where to write the CSV")
+    ap.add_argument("--force-frozen", action="store_true",
+                    help="permit writing data/store_synth.csv, whose bytes back the proposal")
+    args = ap.parse_args(argv)
+    if os.path.realpath(args.out) == os.path.realpath(FROZEN) and not args.force_frozen:
+        raise SystemExit(
+            "refusing to write data/store_synth.csv: those bytes are provenance -- "
+            "results/results.json, model/artifacts/ and every dollar figure in the proposal "
+            "are settled against them. Write somewhere else, e.g. "
+            "--out .rehearsal/store_synth.csv, and cmp the two if you mean to check that this "
+            "generator still reproduces the frozen file; or pass --force-frozen if you really "
+            "do mean to replace it.")
+
     rng = np.random.default_rng(params.SEED)
     start = dt.date.fromisoformat(params.START)
     end = dt.date.fromisoformat(params.END)
@@ -85,8 +112,8 @@ def main():
             ))
 
     df = pd.DataFrame(rows)
-    os.makedirs(os.path.join(os.path.dirname(__file__), "..", "data"), exist_ok=True)
-    out = os.path.join(os.path.dirname(__file__), "..", "data", "store_synth.csv")
+    out = args.out
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     df.to_csv(out, index=False)
 
     # quick sanity report
@@ -108,4 +135,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

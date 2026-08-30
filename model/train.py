@@ -8,12 +8,14 @@ config, the artifacts directory and the split are all arguments, because the
 point of this layer is that a store's export can be trained on without editing
 code. Defaults reproduce the frozen configuration exactly.
 
-Two things it refuses to do quietly. It will not write into model/artifacts/
-without --force-frozen: those bytes back the dollar figures in the proposal and
-a rehearsal must not overwrite them. And it aborts the moment the validation
-loss is NaN, naming the row counts and the resolved boundaries, instead of
-burning twelve epochs and then dying inside torch on a best_state that was
-never set.
+Three things it refuses to do quietly. It will not train a supplied panel on a
+split nobody chose: --panel without --spec stops and names both options, because
+the legacy boundaries are the simulator's own dates and are silently wrong for
+every other store. It will not write into model/artifacts/ without --force-frozen:
+those bytes back the dollar figures in the proposal and a rehearsal must not
+overwrite them. And it aborts the moment the validation loss is NaN, naming the
+row counts and the resolved boundaries, instead of burning twelve epochs and then
+dying inside torch on a best_state that was never set.
 """
 import argparse
 import datetime as dt
@@ -183,9 +185,10 @@ def _describe(b, thin):
     print(f"sellout_source {b['sellout_source']} | censored share {known:.3f}")
     if not b["censoring_known"]:
         print("NO SELLOUT DATA: the model is being fitted to the distribution of CENSORED "
-              "SALES, not demand, so the quantities it recommends will run roughly 1-8% "
-              "low on the busiest days. That is the safe direction and a supported mode. "
-              "Do not compensate by inflating the critical fractile.")
+              "SALES, not demand, so the quantities it recommends will run low on the busiest "
+              "days -- by how much is not measured anywhere in this repo. That is the safe "
+              "direction and a supported mode. Do not compensate by inflating the critical "
+              "fractile.")
     for e in b["excluded_items"]:
         print(f"excluded {e['item']}: {e['reason']}")
     for item, n in sorted(b["dropped_rows"].items()):
@@ -200,7 +203,9 @@ def _parse_args(argv):
     ap.add_argument("--panel", default=None, help="canonical panel CSV (default: the simulator's)")
     ap.add_argument("--items", default=CONFIG)
     ap.add_argument("--artifacts", default=ARTIFACTS)
-    ap.add_argument("--spec", choices=("legacy", "auto"), default="legacy")
+    ap.add_argument("--spec", choices=("legacy", "auto"), default=None,
+                    help="auto: boundaries and vocabularies derived from the panel. "
+                         "legacy: the frozen simulator's. Required with --panel")
     ap.add_argument("--max-epochs", type=int, default=MAX_EPOCHS)
     ap.add_argument("--patience", type=int, default=PATIENCE)
     ap.add_argument("--batch", type=int, default=BATCH)
@@ -216,6 +221,38 @@ def _parse_args(argv):
     ap.add_argument("--force-frozen", action="store_true",
                     help="permit writing into model/artifacts, whose bytes back the proposal")
     return ap.parse_args(argv)
+
+
+def _guard_spec(panel, spec):
+    """A supplied panel with no --spec must not quietly inherit the simulator's split.
+
+    legacy_spec() pins train_end 2024-12-31 and val_start 2024-11-04. Those are the
+    frozen simulator's dates; on a store's own export they are arbitrary. A 2024-2026
+    panel trains on ten months, validates on eight weeks whose statistics it has
+    already seen, parks two years in "test", runs the holiday countdown covariate dead
+    -- and exits 0 with a checkpoint that looks fine.
+
+    The refusal text is features.spec_refusal, shared with model.backtest so the two
+    commands cannot end up describing the frozen boundaries differently. That costs one
+    re-run; the alternative costs a wrongly split model shown to a manager. The no-panel
+    command is untouched -- it is the provenance of results/results.json and still means
+    legacy.
+    """
+    if panel is None or spec is not None:
+        return
+    raise SystemExit(features.spec_refusal(panel, features.AUTO_NOTE_VALIDATE))
+
+
+def _note_legacy(df, spec):
+    """--spec legacy on a supplied panel: say out loud whose dates those boundaries are."""
+    dates = df.date.drop_duplicates()
+    train = int((dates < spec["val_start"]).sum())
+    val = int(((dates >= spec["val_start"]) & (dates <= spec["train_end"])).sum())
+    test = int((dates >= spec["test_start"]).sum())
+    print(f"--spec legacy on a supplied panel: the boundaries below are the simulator's "
+          f"fixed dates, not derived from this panel. It runs {dates.min().date()}.."
+          f"{dates.max().date()}; of its {len(dates)} dates, {train} land in the legacy "
+          f"train window, {val} in val, {test} in test.")
 
 
 def _guard_frozen(artifacts_dir, force):
@@ -245,10 +282,16 @@ def _validate_panel(df, items_path, split_opts):
 
 def main(argv=None):
     args = _parse_args(argv)
+    _guard_spec(args.panel, args.spec)
     if not args.dry_run:
         _guard_frozen(args.artifacts, args.force_frozen)
 
-    df = features.load(args.panel) if args.panel else features.load()
+    try:
+        df = features.load(args.panel) if args.panel else features.load()
+    except features.PanelNotFound as exc:
+        raise SystemExit(f"--panel: {exc}")
+    if not os.path.exists(args.items):
+        raise SystemExit(f"--items: no items config at {args.items}")
 
     if args.spec == "auto":
         split_opts = dict(val_days=args.val_days, test_days=args.test_days,
@@ -258,8 +301,10 @@ def main(argv=None):
                   "Nothing was written.")
             return 1
         spec = features.spec_for_panel(df, **split_opts)
-    else:
+    else:                    # "legacy", or None -- which _guard_spec allows only with no panel
         spec = features.legacy_spec()
+        if args.panel:
+            _note_legacy(df, spec)
 
     try:
         b = features.build(df, spec=spec)
@@ -269,6 +314,9 @@ def main(argv=None):
               "does not carry enough history to hold out a validation window worth stopping "
               "on. Ask the store for more item movement, or re-run with --no-test or "
               "--allow-short and read the caveats those modes print.")
+        if args.panel and args.spec == "legacy":
+            print("Unless it is the boundaries: --spec legacy pinned the simulator's dates, "
+                  "which this panel may simply sit outside. --spec auto derives its own.")
         return 2
 
     thin = bool(args.allow_short)

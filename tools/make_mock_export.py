@@ -73,6 +73,15 @@ CONDITIONS = {
 }
 
 MOVEMENT_HEADER = ["BUS DT", "ITEM NBR", "ITEM DESC", "DEPT", "UNITS", "NET SALES $"]
+
+# The same movement report as the district office runs it: one more column, one more store,
+# and no other difference. It is emitted alongside the single-store files rather than instead
+# of them, because both are things a store hands over and the chain has to survive either.
+# The second store's units are the first store's scaled, which is enough to make a merged
+# panel obviously wrong and a filtered one exactly right.
+DISTRICT_HEADER = ["STORE"] + MOVEMENT_HEADER
+DISTRICT_STORES = ("0123", "0456")
+DISTRICT_SCALE = 1.37
 TITLE_BLOCK = [
     ["RETAIL PRO 9 - ITEM MOVEMENT BY DAY"],
     ["STORE 0123   PREPARED FOODS   RUN {run}"],
@@ -250,7 +259,7 @@ def _hours_rows(df, messy):
     return rows
 
 
-def _mapping(out_dir, dirt, sellout):
+def _mapping(out_dir, dirt, sellout, district=False):
     """A source mapping that fits exactly the files just written, and nothing else."""
     messy = dirt in ("light", "full")
     fmt = "%m/%d/%y" if messy else "%Y-%m-%d"
@@ -273,6 +282,12 @@ def _mapping(out_dir, dirt, sellout):
     ]
     if sellout == "none":
         entries = [e for e in entries if e["role"] != "production"]
+    if district:
+        # only the sales role changes: the scale log, hours and weather files carry no store
+        # column, so they join to whichever store --store selected
+        entries[0] = dict(entries[0], path=os.path.join(out_dir, "DISTRICT_MOVEMENT.CSV"),
+                          header_row=1, skip_footer_rows=0,
+                          note="run for the whole district: one row per store per item-day")
 
     mapping = {
         "schema": "ht-source-mapping/1",
@@ -282,7 +297,8 @@ def _mapping(out_dir, dirt, sellout):
         "files": entries,
         "columns": {
             "sales": {"date": "BUS DT", "item_code": "ITEM NBR", "item_desc": "ITEM DESC",
-                      "units": "UNITS", "dollars": "NET SALES $", "cost": None},
+                      "units": "UNITS", "dollars": "NET SALES $", "cost": None,
+                      "store": "STORE" if district else None},
             "production": {"date": "PRINT DT", "item_code": "ITEM NBR",
                            "units": "LABELS PRINTED"},
             "hours": {"date": "DATE", "open": "OPEN", "close": "CLOSE"},
@@ -380,6 +396,18 @@ def make_export(src_csv, out_dir, *, seed=7, dirt="full"):
             encoding="cp1252" if messy else "utf-8", newline="\r\n" if messy else "\n",
             title=title, footer=footer)
 
+    district = []
+    for d, c, s, p, u, v in zip(sales["date"], code, desc, dept, sales["units"],
+                                sales["dollars"]):
+        district.append([DISTRICT_STORES[0], _date(d, messy), c, s, p,
+                         _units(u, messy), _money(v, messy)])
+        district.append([DISTRICT_STORES[1], _date(d, messy), c, s, p,
+                         _units(round(u * DISTRICT_SCALE, 2), messy),
+                         _money(round(v * DISTRICT_SCALE, 2), messy)])
+    manifest["files"]["DISTRICT_MOVEMENT.CSV"] = _write(
+        os.path.join(out_dir, "DISTRICT_MOVEMENT.CSV"), district, DISTRICT_HEADER,
+        encoding="cp1252" if messy else "utf-8", newline="\r\n" if messy else "\n")
+
     # The scale log carries the PLU, not the package barcode, and for a weighed item the
     # printed label records the weight -- so this column is pounds for hotbar-lb and pieces
     # elsewhere, on the same basis as UNITS. That is what makes it comparable at all.
@@ -407,6 +435,10 @@ def make_export(src_csv, out_dir, *, seed=7, dirt="full"):
         with open(os.path.join(out_dir, name), "w", encoding="utf-8", newline="\n") as fh:
             json.dump(_mapping(out_dir, dirt, rule), fh, indent=1)
             fh.write("\n")
+    with open(os.path.join(out_dir, "mapping_district.json"), "w",
+              encoding="utf-8", newline="\n") as fh:
+        json.dump(_mapping(out_dir, dirt, "produced_vs_sold", district=True), fh, indent=1)
+        fh.write("\n")
 
     _assert_clean(out_dir)
     with open(os.path.join(out_dir, "manifest.json"), "w", encoding="utf-8", newline="\n") as fh:
@@ -442,7 +474,8 @@ def main(argv=None):
     print(f"wrote {args.out}  (dirt={args.dirt}, seed={args.seed})")
     for name, n in m["files"].items():
         print(f"  {name:22s} {n:6d} rows")
-    print("  mapping.json, mapping_nosellout.json, items.json, manifest.json")
+    print("  mapping.json, mapping_nosellout.json, mapping_district.json, items.json, "
+          "manifest.json")
     if m["applied"]:
         print("dirt applied:")
         for k, v in sorted(m["applied"].items()):

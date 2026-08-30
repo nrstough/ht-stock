@@ -32,6 +32,12 @@ sim/params.py: the nine records there are the same numbers, and severing the
 import is what lets this file run against a store's export. The one remaining
 simulator dependency is a lazy import inside oracle_q().
 
+A supplied --panel must name a --spec. The split decides which rows the dollar
+figures cover, and the legacy boundaries are the simulator's own dates: silently
+inheriting them on a store's export would report a saving over a window nobody
+chose. `python -m model.backtest` with no arguments is untouched and still means
+legacy -- it is the provenance of results/results.json.
+
 Writes results/results.json with the summary, per-item detail, and the chart
 series used by the PoC dashboard and the proposal.
 """
@@ -53,8 +59,9 @@ from .net import DemandNet
 
 REPO = os.path.join(os.path.dirname(__file__), "..")
 RESULTS = os.path.join(REPO, "results")
-# the frozen sim-settlement replay. An observed run refuses to write here rather than
-# quietly replacing the file every dollar figure in proposal/ and poc/ is settled against.
+# the frozen sim-settlement replay. Only that exact run may write here -- see
+# _guard_frozen_out, which is what stops a flag from quietly replacing the file every dollar
+# figure in proposal/ and poc/ is settled against.
 DEFAULT_OUT = os.path.abspath(os.path.join(RESULTS, "results.json"))
 ARTIFACTS = os.path.join(os.path.dirname(__file__), "artifacts")
 CONFIG = os.path.join(REPO, "config", "items.example.json")
@@ -264,17 +271,111 @@ def _parse_args(argv):
     ap.add_argument("--items", default=CONFIG, help="item economics JSON")
     ap.add_argument("--artifacts", default=ARTIFACTS, help="directory holding demandnet.pt")
     ap.add_argument("--out", default=DEFAULT_OUT)
-    ap.add_argument("--spec", choices=("legacy", "auto"), default="legacy")
+    ap.add_argument("--spec", choices=("legacy", "auto"), default=None,
+                    help="auto: boundaries and vocabularies derived from the panel. "
+                         "legacy: the frozen simulator's. Required with --panel")
     ap.add_argument("--settlement", choices=("sim", "observed"), default="sim")
     ap.add_argument("--policies", default=",".join(POLICIES))
     ap.add_argument("--calib-window", type=int, default=None,
                     help="days of service-matching calibration ending before the test split")
+    ap.add_argument("--val-days", type=int, default=None)
+    ap.add_argument("--test-days", type=int, default=None)
+    ap.add_argument("--no-test", action="store_true")
+    ap.add_argument("--allow-short", action="store_true")
     return ap.parse_args(argv)
+
+
+def _guard_spec(panel, spec):
+    """A supplied panel with no --spec must not quietly replay on the simulator's window.
+
+    This is the same refusal model.train makes, and it matters more here: the number this
+    command prints is the dollar saving. On a 2024-2026 export the legacy boundaries park
+    two years in "test" and forecast them with z-scoring fitted through 2024-12-31, so the
+    money would cover a window nobody chose. The no-panel default still means legacy --
+    `python -m model.backtest` is the provenance of results/results.json.
+    """
+    if panel is None or spec is not None:
+        return
+    raise SystemExit(features.spec_refusal(panel, features.AUTO_NOTE_DERIVE))
+
+
+def _not_the_frozen_run(args):
+    """Which arguments make this something other than the frozen replay. Empty means it is."""
+    why = []
+    if args.panel:
+        why.append("--panel")
+    if args.spec == "auto":
+        why.append("--spec auto")
+    if args.settlement != "sim":
+        why.append(f"--settlement {args.settlement}")
+    if args.policies != ",".join(POLICIES):
+        why.append(f"--policies {args.policies}")
+    for flag, value in (("--calib-window", args.calib_window), ("--val-days", args.val_days),
+                        ("--test-days", args.test_days)):
+        if value is not None:
+            why.append(f"{flag} {value}")
+    for flag, value in (("--no-test", args.no_test), ("--allow-short", args.allow_short)):
+        if value:
+            why.append(flag)
+    if os.path.abspath(args.artifacts) != os.path.abspath(ARTIFACTS):
+        why.append(f"--artifacts {args.artifacts}")
+    if os.path.abspath(args.items) != os.path.abspath(CONFIG):
+        why.append(f"--items {args.items}")
+    return why
+
+
+def _guard_frozen_bytes(out, payload):
+    """The frozen replay writes results/results.json only while it still reproduces it.
+
+    The configuration guard cannot see everything that moves the numbers: retrain
+    model/artifacts with --force-frozen and the plain command's own output changes, with no
+    flag to notice it by. So the last check is the bytes. Reproducing them is a no-op write;
+    not reproducing them means this run is no longer the one the proposal is settled against,
+    which is a thing to be told rather than a thing to have happen quietly.
+    """
+    if os.path.abspath(out) != DEFAULT_OUT or not os.path.exists(out):
+        return
+    with open(out, "rb") as fh:
+        published = fh.read()
+    if payload.encode() == published:
+        return
+    raise SystemExit(
+        "the frozen replay no longer reproduces results/results.json byte for byte, so "
+        "nothing was written. Something underneath it moved -- the checkpoint in "
+        "model/artifacts, data/store_synth.csv, or a library version. Re-run with "
+        "--out .rehearsal/results_new.json and diff the two; replacing the published file "
+        "replaces the proposal's dollar figures with numbers nothing else has been settled "
+        "against.")
+
+
+def _guard_frozen_out(args):
+    """results/results.json is the frozen replay, and only that run may write over it.
+
+    The other two frozen writers refuse outright and take --force-frozen. This one cannot:
+    `python -m model.backtest` with no arguments IS the provenance of results.json and has to
+    go on reproducing it byte for byte, which is the claim the README makes. So the refusal is
+    on the CONFIGURATION instead -- anything that changes the numbers has to name its own
+    --out. Without this, `--policies dl,naive` replaced a six-policy file with a two-policy one
+    and printed nothing but "wrote".
+    """
+    if os.path.abspath(args.out) != DEFAULT_OUT:
+        return
+    why = _not_the_frozen_run(args)
+    if not why:
+        return
+    raise SystemExit(
+        "results/results.json is the frozen sim-settlement replay the proposal's dollar "
+        f"figures rest on, and this run is not it ({', '.join(why)}). Name your own --out, "
+        "e.g. --out .rehearsal/results_real.json. Only `python -m model.backtest` with no "
+        "arguments writes results/results.json, and it reproduces the published bytes.")
 
 
 def main(argv=None):
     args = _parse_args(argv)
-    df = features.load(args.panel) if args.panel else features.load()
+    try:
+        df = features.load(args.panel) if args.panel else features.load()
+    except features.PanelNotFound as exc:
+        raise SystemExit(f"--panel: {exc}")
 
     has_truth = all(c in df.columns for c in schema.SIM_ONLY)
     if args.settlement == "sim" and not has_truth:
@@ -284,6 +385,21 @@ def main(argv=None):
         # Hard Rule 6 made structural: the truth columns cannot be read further down
         # because they are not on the frame any more.
         df = df.drop(columns=[c for c in schema.SIM_ONLY if c in df.columns])
+
+    # after the settlement check, which is a property of the frame: a panel that cannot be
+    # settled at all is not helped by first being asked to choose a split for it
+    _guard_spec(args.panel, args.spec)
+
+    if args.no_test:
+        raise SystemExit(
+            "model.backtest replays every policy over the HELD-OUT test window, and --no-test "
+            "says this panel has none: there would be no rows to settle and no dollar figure "
+            "to print. Drop --no-test, or pass --test-days N to hold out a window this panel "
+            "can afford. (model.train takes --no-test because fitting needs only train and "
+            "val; backtesting is the step that needs the window nobody fitted on.)")
+
+    # before any forecasting work: a refusal after four minutes of replay is a worse refusal
+    _guard_frozen_out(args)
 
     wanted = [p.strip() for p in args.policies.split(",") if p.strip()]
     unknown = [p for p in wanted if p not in POLICIES]
@@ -297,7 +413,11 @@ def main(argv=None):
                       "generative noise widths, which no store export contains")
     selected = [p for p in POLICIES if p in wanted]
 
-    spec = features.legacy_spec() if args.spec == "legacy" else features.spec_for_panel(df)
+    if args.spec == "auto":
+        spec = features.spec_for_panel(df, val_days=args.val_days, test_days=args.test_days,
+                                       no_test=args.no_test, allow_short=args.allow_short)
+    else:                # "legacy", or None -- which _guard_spec allows only with no panel
+        spec = features.legacy_spec()
     b = features.build(df, spec=spec)
 
     items = {k: v for k, v in ht_config.load_items(args.items).items() if k in b["items"]}
@@ -430,17 +550,13 @@ def main(argv=None):
         out["censoring_known"] = bool(b["censoring_known"])
         out["items_config_hash"] = ht_config.config_hash(args.items)
 
-    if args.settlement == "observed" and os.path.abspath(args.out) == DEFAULT_OUT:
-        raise SystemExit(
-            "results/results.json is the frozen sim-settlement replay the proposal's dollar "
-            "figures rest on; an observed-settlement run must name its own --out, e.g. "
-            "--out .rehearsal/results_real.json")
-
+    # allow_nan=False after the sweep: a bare NaN token is not JSON, and this file is read
+    # by poc/dashboard.html's JSON.parse, which stops at the first one
+    payload = json.dumps(_json_safe(out), indent=1, allow_nan=False)
+    _guard_frozen_bytes(args.out, payload)
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w") as f:
-        # allow_nan=False after the sweep: a bare NaN token is not JSON, and this file is read
-        # by poc/dashboard.html's JSON.parse, which stops at the first one
-        json.dump(_json_safe(out), f, indent=1, allow_nan=False)
+        f.write(payload)
 
     _report(summary, wape, [p for p in PRINT_ORDER if p in summary], args.settlement)
     print(f"wrote {os.path.abspath(args.out)}")

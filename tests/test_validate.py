@@ -223,3 +223,64 @@ def test_format_report_prints_the_verdict_and_the_sections(make_panel):
     assert "FAIL" in text
     assert "ERRORS" in text and "sold_negative" in text
     assert "ITEM CENSUS" in text
+
+
+# ---- conditions that look alike from a distance but have different remedies ----
+
+def test_a_few_blank_store_cells_are_not_diagnosed_as_a_district_export(make_panel):
+    """Both remedies for multi_store -- re-run for one store, re-ingest with --store -- are
+    useless against an empty cell, and the message's arithmetic ("the context window reaches
+    back 14 days") is false for a panel that is 8,793 rows of one store and 5 of nothing."""
+    panel = _clean(make_panel).copy()
+    panel.loc[panel.index[:5], "store"] = "default"
+    report = validate.validate(panel, ITEMS)
+    assert "store_blank" in _levels(report, "error")
+    assert "multi_store" not in _levels(report, "error")
+    finding = [f for f in report["findings"] if f.check == "store_blank"][0]
+    assert finding.count == 5 and "5 row(s)" in finding.message
+
+
+def test_a_real_district_panel_is_still_a_district_panel(make_panel):
+    one = _clean(make_panel).copy()
+    two = one.copy()
+    two["store"] = "0456"
+    report = validate.validate(pd.concat([one, two], ignore_index=True), ITEMS)
+    assert "multi_store" in _levels(report, "error")
+
+
+def test_negative_waste_is_an_error_from_whatever_path_wrote_it(make_panel):
+    panel = _clean(make_panel).copy()
+    panel.loc[panel.index[:2], "wasted"] = -4.0
+    report = validate.validate(panel, ITEMS)
+    assert "wasted_negative" in _levels(report, "error")
+
+
+def test_a_day_fresh_row_with_production_and_no_waste_is_named(make_panel):
+    panel = _clean(make_panel).copy()
+    panel["produced"] = panel["sold"] + 3.0
+    panel["wasted"] = np.nan
+    report = validate.validate(panel, ITEMS)
+    assert "waste_not_derived" in _levels(report, "warning")
+
+
+# ---- the floors move with the split mode the caller asked for ----
+
+def test_allow_short_relaxes_the_per_item_floor_the_trainer_will_use(make_panel):
+    """The runbook's floors table offers --allow-short at 70 panel days / 56 item days, and
+    model.train's docstring promises the validator checks the floor this run will use. With
+    the 84-day floor hard-coded, `model.train --allow-short` refused every panel the trainer
+    itself would have accepted, and the documented escape hatch never fired."""
+    panel = make_panel(["bread"], start="2025-01-01", days=90)
+    strict = validate.validate(panel, ITEMS)
+    short = validate.validate(panel, ITEMS, split_opts=dict(allow_short=True))
+
+    assert "insufficient_history" in _levels(strict, "error")     # 90 days, 126-day floor
+    assert short["ok"] is True                                    # the documented short mode
+    assert _levels(short, "error") == set()
+    assert short["excluded_items_preview"] == []
+    # the per-item floor moved with it: 62 open train days clears 56 and not 84
+    train_end = pd.Timestamp(short["splits_preview"]["train_end"])
+    assert validate.item_census(panel, train_end=train_end,
+                                min_item_days=validate.MIN_TRAIN_DAYS_SHORT)["status"].eq(
+        "ok").all()
+    assert validate.item_census(panel, train_end=train_end)["status"].eq("short").all()

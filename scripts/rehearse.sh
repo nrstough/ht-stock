@@ -65,6 +65,15 @@ step "1  clean scratch"
 rm -rf "$REH"
 mkdir -p "$REH"
 
+# The frozen md5 above says data/store_synth.csv has not changed. This says it is still the
+# file sim/generate.py produces -- the seed is fixed, so a re-run into scratch must land on
+# the same bytes. Without it a params.py edit would leave the CSV frozen and the generator
+# quietly disagreeing with it.
+"$PY" -m sim.generate --out "$REH/store_synth_regen.csv" > "$REH/generate.txt"
+cmp "$REH/store_synth_regen.csv" data/store_synth.csv \
+  || fail "sim.generate no longer reproduces data/store_synth.csv"
+echo "sim.generate still reproduces data/store_synth.csv byte for byte"
+
 step "2  synthetic store -> raw real-shaped export  (dirt=$DIRT)"
 "$PY" tools/make_mock_export.py --src data/store_synth.csv --out .rehearsal/raw --dirt "$DIRT"
 
@@ -75,9 +84,12 @@ step "3  raw export -> canonical panel"
 
 step "4  validate the panel"
 set +e
+# --ingest-report is what makes the repair block real: a collapsed duplicate, a dropped item
+# code and a grid-filled zero leave no trace in the panel, so without the report the validator
+# can only say it cannot count them.
 "$PY" -m ht.validate --panel .rehearsal/panel.csv --items "$ITEMS" \
-  --mapping .rehearsal/raw/mapping.json --json .rehearsal/validation.json \
-  > .rehearsal/validation.txt
+  --mapping .rehearsal/raw/mapping.json --ingest-report .rehearsal/ingest_report.json \
+  --json .rehearsal/validation.json > .rehearsal/validation.txt
 VALIDATE_RC=$?
 set -e
 tail -n 40 .rehearsal/validation.txt
@@ -93,6 +105,69 @@ if [ "$DIRT" = "full" ]; then
   echo "expected warnings present: short_history, sellout_coverage, weather_unknown,"
   echo "                           unexplained_outage"
 fi
+for check in repair_grid_filled repair_duplicates_collapsed repair_rows_dropped; do
+  grep -q "\[$check\]" .rehearsal/validation.txt \
+    || fail "expected INFO [$check] is missing -- the ingest report did not reach the validator"
+done
+echo "repairs counted on the validation page: grid_filled, duplicates_collapsed, rows_dropped"
+
+step "4b  the district export: ingest, validate and features must agree"
+# The same movement report as the district office runs it. Three layers guard this one
+# condition and here is where they have to give the same answer, because only ingest can fix
+# it: ht.ingest refuses the raw file, ht.validate errors on a merged panel, features.build
+# refuses one that reached it without either.
+set +e
+"$PY" -m ht.ingest --mapping .rehearsal/raw/mapping_district.json --items "$ITEMS" \
+  --dry-run --quiet > .rehearsal/district_refusal.txt 2>&1
+DISTRICT_RC=$?
+set -e
+cat .rehearsal/district_refusal.txt
+[ "$DISTRICT_RC" -eq 1 ] || fail "ht.ingest accepted a two-store export (rc=$DISTRICT_RC)"
+grep -q "0456" .rehearsal/district_refusal.txt \
+  || fail "the refusal does not name the store numbers the file holds"
+
+"$PY" -m ht.ingest --mapping .rehearsal/raw/mapping_district.json --items "$ITEMS" \
+  --store 0123 --out .rehearsal/panel_district.csv --quiet | tail -n 3
+"$PY" - <<'DISTRICTEOF'
+import sys
+import pandas as pd
+a = pd.read_csv(".rehearsal/panel.csv")
+b = pd.read_csv(".rehearsal/panel_district.csv")
+join = a.merge(b, on=["item", "date"], suffixes=("_s", "_d"))
+same = len(join) == len(a) == len(b) and all(
+    (join[c + "_s"].fillna(-1) == join[c + "_d"].fillna(-1)).all()
+    for c in ("sold", "produced", "wasted", "stockout", "is_closed"))
+print(f"  --store 0123 on the district export reproduces the single-store panel: {same} "
+      f"({len(a)} rows)")
+sys.exit(0 if same else 1)
+DISTRICTEOF
+
+# Ingest will not write a merged panel, so the rehearsal builds one by hand and checks that
+# the other two layers still refuse it.
+"$PY" - <<'MERGEEOF'
+import pandas as pd
+a = pd.read_csv(".rehearsal/panel.csv")
+b = a.copy()
+b["store"] = 456
+pd.concat([a, b], ignore_index=True).to_csv(".rehearsal/panel_two_stores.csv", index=False)
+MERGEEOF
+set +e
+"$PY" -m ht.validate --panel .rehearsal/panel_two_stores.csv --items "$ITEMS" \
+  > .rehearsal/validation_two_stores.txt 2>&1
+TWO_RC=$?
+set -e
+grep -m1 "\[multi_store\]" .rehearsal/validation_two_stores.txt \
+  || fail "ht.validate did not raise [multi_store] on a two-store panel"
+[ "$TWO_RC" -ne 0 ] || fail "ht.validate passed a two-store panel"
+"$PY" - <<'FEATEOF'
+from model import features
+try:
+    features.build(features.load(".rehearsal/panel_two_stores.csv"), spec=features.legacy_spec())
+except features.MultiStorePanel as exc:
+    print(f"  features.build refuses it too: {str(exc).split('.')[0]}.")
+else:
+    raise SystemExit("features.build accepted a two-store panel")
+FEATEOF
 
 step "5  train on the panel  (spec auto, ${EPOCHS} epochs, artifacts into .rehearsal/)"
 "$PY" -m model.train --panel .rehearsal/panel.csv --items "$ITEMS" \
@@ -120,6 +195,39 @@ for day in "${DATES[@]}"; do
     --out .rehearsal/shadow --store "Rehearsal Store" --format both --backfill > /dev/null
   printf '  sheet %s\n' "$day"
 done
+
+# The kitchen's half of the loop, and it has to run HERE: score_day freezes a day's verdict
+# once, so a sheet keyed in after catch-up would never reach it. These returned sheets are
+# SYNTHETIC -- the made and sold-out cells are read straight off the panel, not off paper --
+# so this proves the intake, the parser and the sellout stamp, and proves nothing about
+# handwriting. Without it the rehearsal never exercises `enter` at all, and for a store whose
+# export carries no sellout rule the weekly gates G3 and G4 stay permanently unmeasurable.
+for day in "${DATES[@]}"; do
+  "$PY" - "$day" "$ITEMS" <<'SHEETEOF' > .rehearsal/sheet_back.csv
+import json
+import sys
+
+import pandas as pd
+
+day, items_path = sys.argv[1], sys.argv[2]
+items = json.load(open(items_path))["items"]
+panel = pd.read_csv(".rehearsal/panel.csv")
+rows = panel[(panel["date"] == day) & (panel["item"].isin(items))]
+for _, r in rows.iterrows():
+    # An empty SOLD OUT AT cell on a keyed-in row MEANS "it did not sell out". The panel
+    # only knows that where stockout_known is 1, so a row it cannot answer for is left off
+    # the sheet entirely rather than answered with a blank -- writing one would have this
+    # script inventing the very observation the return path exists to collect.
+    if float(r["stockout_known"] or 0) != 1:
+        continue
+    made = "" if pd.isna(r["produced"]) else f"{float(r['produced']):g}"
+    out = "13:45" if float(r["stockout"] or 0) == 1 else ""
+    print(f"{r['item']},{made},{out}")
+SHEETEOF
+  "$PY" -m model.shadow enter --items "$ITEMS" --date "$day" --out .rehearsal/shadow \
+    --file .rehearsal/sheet_back.csv --by rehearsal | sed 's/^/  /'
+done
+
 "$PY" -m model.shadow catch-up --panel .rehearsal/panel.csv --items "$ITEMS" \
   --out .rehearsal/shadow
 LAST="${DATES[${#DATES[@]}-1]}"
@@ -127,6 +235,9 @@ WEEKS=$(( REPLAY_DAYS / 7 ))
 "$PY" -m model.shadow weekly --panel .rehearsal/panel.csv --items "$ITEMS" \
   --artifacts .rehearsal/artifacts --week-ending "$LAST" --weeks "$WEEKS" \
   --out .rehearsal/shadow --format both --include-backfilled | tee .rehearsal/weekly.txt
+# a mixed week prints every source it was scored with, e.g. "produced_vs_sold+sheet"
+grep -qE "censoring [a-z_+]*sheet" .rehearsal/weekly.txt \
+  || fail "the keyed-in sheets did not reach the weekly report's censoring source"
 "$PY" -m model.shadow status --out .rehearsal/shadow
 
 step "8  the degraded run: no sellout signal at all"
@@ -139,6 +250,22 @@ step "8  the degraded run: no sellout signal at all"
 
 step "9  provenance: the frozen backtest must still reproduce results/results.json"
 cp results/results.json "$REH/results.before.json"
+
+# The claim the README's provenance paragraph rests on: the plain command reproduces this
+# file, and any OTHER configuration has to name its own --out. A one-flag run that silently
+# replaced six policies with two is what this guard exists for.
+set +e
+"$PY" -m model.backtest --policies dl,naive > "$REH/backtest_guard.txt" 2>&1
+GUARD_RC=$?
+set -e
+[ "$GUARD_RC" -eq 1 ] \
+  || fail "model.backtest --policies did not refuse results/results.json (rc=$GUARD_RC)"
+grep -q "is not it" "$REH/backtest_guard.txt" \
+  || fail "the refusal does not say which flags make this run a different one"
+cmp -s results/results.json "$REH/results.before.json" \
+  || fail "the refused run still touched results/results.json"
+echo "a non-frozen configuration is refused before it can write results/results.json"
+
 "$PY" -m model.backtest > "$REH/backtest.txt" || {
   cp "$REH/results.before.json" results/results.json
   fail "model.backtest exited non-zero; results/results.json restored"
@@ -168,7 +295,8 @@ print(f"  export        {rep['date_range'][0]} .. {rep['date_range'][1]}  "
 print(f"  sellout rule  {sell['rule']}  rate {sell['rate']}  "
       f"known_share {sell['known_share']:.3f}  latency {sell['latency_days']}d")
 print(f"  repairs       duplicates {rep['duplicates_collapsed']}  "
-      f"negatives {rep['negatives_clipped']}  grid rows {sum(rep['grid_rows_inserted'].values())}")
+      f"negatives {rep['negatives_seen']} seen / {rep['negatives_clipped']} clipped  "
+      f"grid rows {sum(rep['grid_rows_inserted'].values())}")
 print(f"  findings      {sum(f['level'] == 'error' for f in val['findings'])} errors, "
       f"{sum(f['level'] == 'warning' for f in val['findings'])} warnings")
 print(f"  splits        train_end {meta['train_end']}  val_start {meta['val_start']}  "

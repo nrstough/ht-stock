@@ -29,11 +29,14 @@ Nothing here can see true demand. Accuracy comes from model/evaluate.py's
 observable-only metrics, and the economics are the same measured-or-bounded pair.
 """
 import argparse
+import collections
 import csv
 import datetime as dt
 import json
 import math
 import os
+import re
+import sys
 import uuid
 from types import SimpleNamespace
 
@@ -58,15 +61,19 @@ DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 SHADOW_BANNER = "SHADOW MODE - DO NOT CHANGE WHAT YOU MAKE TODAY."
-NO_SELLOUT_CAVEAT = ("No sellout data: these quantities are likely 1-8% low on the "
-                     "busiest days.")
+# the printed ITEM column. _item_index registers the truncated name too, because a name the
+# sheet prints has to be a name `enter` accepts back.
+SHEET_ITEM_WIDTH = 18
+NO_SELLOUT_CAVEAT = ("No sellout data: quantities run low on the busiest days "
+                     "(size not measured).")
 
 OVERRIDE_COLUMNS = ["date", "item", "rec_qty", "actual_produced", "sold_out_at", "note",
-                    "entered_by", "entered_ts"]
+                    "entered_by", "entered_ts", "sellout_source"]
 SCORE_COLUMNS = ["for_date", "item", "rec_qty", "par_qty", "p20", "p50", "p90", "sold",
-                 "produced", "stockout", "stockout_known", "wasted", "is_closed",
-                 "row_status", "abs_err", "signed_err", "pinball", "waste_actual_units",
-                 "waste_model_units", "lost_lower_units", "source", "status"]
+                 "produced", "stockout", "stockout_known", "sellout_source", "wasted",
+                 "is_closed", "row_status", "abs_err", "signed_err", "pinball",
+                 "waste_actual_units", "waste_model_units", "lost_lower_units", "source",
+                 "status"]
 REVISION_COLUMNS = ["revised_at", "for_date", "item", "field", "old_value", "new_value"]
 
 
@@ -97,14 +104,20 @@ def _load_meta(artifacts_dir):
         return json.load(f)
 
 
-def _spec_for(meta):
+def _spec_for(meta, panel, artifacts_dir):
     """Score with the spec the checkpoint was trained on, never one re-derived here.
 
     A sheet printed this morning must z-score with the same statistics and one-hot the
     same vocabularies as training did; re-deriving them from today's panel is exactly
     the drift shadow mode would hide for four weeks.
+
+    A checkpoint whose meta.json records no spec is the one case where there is nothing
+    to score with, only the legacy layout to assume. features.spec_from_meta checks that
+    assumption against the panel and refuses when it fails -- on a 2026 panel the legacy
+    trend covariate reaches 1.4, a value the network never saw, and the whole sheet's
+    quantities would be extrapolation printed as a recommendation.
     """
-    return meta["spec"] if "spec" in meta else features.legacy_spec()
+    return features.spec_from_meta(meta, panel, artifacts_dir)
 
 
 def _round_batch(q, batch, continuous):
@@ -256,7 +269,7 @@ def forecast(panel, artifacts_dir, items, for_date, allow_backfill=False,
     for_date = pd.Timestamp(for_date).normalize()
     schema.assert_no_truth(panel)      # hard rule 6, structural rather than conventional
     meta = _load_meta(artifacts_dir)
-    spec = _spec_for(meta)
+    spec = _spec_for(meta, panel, artifacts_dir)
     stats = meta["stats"]
     ctx_days = int(spec["context_days"])
     taus = np.asarray(meta["taus"], dtype=float)
@@ -413,13 +426,31 @@ def _fallback_reason(row):
     return str(row.get("fallback_reason") or row.get("reason") or "")
 
 
-def _sheet_rows(recs):
-    """(dept, [row dicts]) in print order, model rows only."""
+def _sheet_rows(recs, multi_day=False):
+    """(dept, [row dicts]) in print order, model rows only, one shelf-life class at a time.
+
+    Multi-day items are split out because the MAKE beside them is a one-day newsvendor
+    quantity and they carry over, so it is not an order -- and a MAKE column that mixes the
+    two teaches the kitchen to distrust the whole page.
+    """
     out = []
-    live = recs[recs["source"] == "model"]
+    live = recs[(recs["source"] == "model")
+                & ((pd.to_numeric(recs["shelf_life_days"], errors="coerce").fillna(1) > 1)
+                   == bool(multi_day))]
     for dept in sorted(live["dept"].unique()):
         out.append((dept, live[live["dept"] == dept].to_dict("records")))
     return out
+
+
+def _carry_over_rows(recs):
+    """The model rows for items that keep, in print order, flattened across departments."""
+    return [r for _, rows in _sheet_rows(recs, multi_day=True) for r in rows]
+
+
+def _carry_over_why(row):
+    """Why this item's MAKE is not an order, in one clause the kitchen can act on."""
+    return (f"{int(row['shelf_life_days'])}-day shelf life: MAKE is one day's demand and "
+            f"does not subtract what is already on the shelf; {row['why_text']}")
 
 
 def _wrap(text, width, indent=""):
@@ -474,19 +505,30 @@ def morning_sheet(recs, *, store, for_date, conditions, yesterday=None, excluded
         L += ["", dept.upper(), head, rule]
         for r in rows:
             span = _fmt_span(r.get("q_0.20"), r.get("q_0.90"), r["unit"])
-            name = r["item_name"][:18]
-            if r["shelf_life_days"] > 1:
-                name = name[:6] + " (multi-day)"
-            L.append(f"{name:18s} {_fmt_qty(r['par_qty'], r['unit']):>5s} "
+            L.append(f"{r['item_name'][:SHEET_ITEM_WIDTH]:18s} "
+                     f"{_fmt_qty(r['par_qty'], r['unit']):>5s} "
                      f"{_fmt_qty(r['rec_qty'], r['unit']):>6s} {span:>11s} "
                      f"{r['unit']:>4s} {'_' * 9:<9s} {'_' * 12:<12s}")
             L += _wrap("why: " + r["why_text"], w - 4, "    ")
+
+    carry = _carry_over_rows(recs)
+    if carry:
+        L += ["", "CARRY-OVER ITEMS - NOT AN ORDER. CHECK WHAT IS LEFT FIRST.",
+              "these keep for more than a day and the model does not know what carried over",
+              head, rule]
+        for r in carry:
+            span = _fmt_span(r.get("q_0.20"), r.get("q_0.90"), r["unit"])
+            L.append(f"{r['item_name'][:SHEET_ITEM_WIDTH]:18s} "
+                     f"{_fmt_qty(r['par_qty'], r['unit']):>5s} "
+                     f"{_fmt_qty(r['rec_qty'], r['unit']):>6s} {span:>11s} "
+                     f"{r['unit']:>4s} {'_' * 9:<9s} {'_' * 12:<12s}")
+            L += _wrap("why: " + _carry_over_why(r), w - 4, "    ")
 
     fallback = recs[recs["source"] != "model"].to_dict("records") + list(excluded)
     if fallback:
         L += ["", "NO FORECAST - use your own par (reason given)", rule]
         for r in fallback:
-            L.append(f"{str(r.get('item_name', r.get('item')))[:18]:18s} "
+            L.append(f"{str(r.get('item_name', r.get('item')))[:SHEET_ITEM_WIDTH]:18s} "
                      f"{_fmt_qty(r.get('par_qty'), r.get('unit', 'each')):>5s} "
                      f"{'-':>6s} {'-':>11s} {str(r.get('unit', '')):>4s} "
                      f"{'_' * 9:<9s} {'_' * 12:<12s}")
@@ -534,11 +576,25 @@ def _morning_html(recs, *, store, for_date, conditions, yesterday, excluded, cav
                  "<th>Sold out at</th></tr>")
         for r in rows:
             span = _fmt_span(r.get("q_0.20"), r.get("q_0.90"), r["unit"])
-            name = esc(r["item_name"]) + (" (multi-day - shadow only)"
-                                          if r["shelf_life_days"] > 1 else "")
-            P.append(f"<tr><td>{name}</td><td>{_fmt_qty(r['par_qty'], r['unit'])}</td>"
+            P.append(f"<tr><td>{esc(r['item_name'])}</td>"
+                     f"<td>{_fmt_qty(r['par_qty'], r['unit'])}</td>"
                      f"<td><b>{_fmt_qty(r['rec_qty'], r['unit'])}</b></td><td>{span}</td>"
                      f"<td>{esc(r['unit'])}</td><td>{esc(r['why_text'])}</td>"
+                     "<td class='write'></td><td class='write'></td></tr>")
+        P.append("</table>")
+    carry = _carry_over_rows(recs)
+    if carry:
+        P.append("<h2>Carry-over items - NOT an order. Check what is left first.</h2>"
+                 "<p>These keep for more than a day and the model does not know what carried "
+                 "over.</p><table><tr><th>Item</th><th>Your par</th><th>Make</th>"
+                 "<th>Low..High</th><th>Unit</th><th>Why</th><th>Made</th>"
+                 "<th>Sold out at</th></tr>")
+        for r in carry:
+            span = _fmt_span(r.get("q_0.20"), r.get("q_0.90"), r["unit"])
+            P.append(f"<tr><td>{esc(r['item_name'])}</td>"
+                     f"<td>{_fmt_qty(r['par_qty'], r['unit'])}</td>"
+                     f"<td><b>{_fmt_qty(r['rec_qty'], r['unit'])}</b></td><td>{span}</td>"
+                     f"<td>{esc(r['unit'])}</td><td>{esc(_carry_over_why(r))}</td>"
                      "<td class='write'></td><td class='write'></td></tr>")
         P.append("</table>")
     fallback = recs[recs["source"] != "model"].to_dict("records") + list(excluded)
@@ -575,8 +631,8 @@ def sheet_caveats(recs, items, meta=None, known_share=1.0):
     multi = sorted({r["item_name"] for r in recs.to_dict("records")
                     if r["shelf_life_days"] > 1})
     if multi:
-        out.append("Multi-day items (" + ", ".join(multi) + ") are SHADOW ONLY: a one-day "
-                   "newsvendor does not describe them.")
+        out.append("Multi-day items (" + ", ".join(multi) + ") print under CARRY-OVER and are "
+                   "SHADOW ONLY: a one-day newsvendor does not describe them.")
     if recs.attrs.get("day_source") == "carried_forward":
         out.append("No row for today in the panel: the calendar is derived and the weather "
                    "is yesterday's, carried forward.")
@@ -617,7 +673,8 @@ def _yesterday(panel, shadow_dir, for_date, items):
             else float(pd.to_numeric(a.get("produced"), errors="coerce"))
         sold = float(pd.to_numeric(a.get("sold"), errors="coerce"))
         rec = float(r["rec_qty"])
-        out = bool(float(a.get("stockout") or 0) > 0)
+        sheet = _sheet_sellout(over.loc[key]) if key in getattr(over, "index", []) else None
+        out = bool(sheet[0] > 0) if sheet else bool(float(a.get("stockout") or 0) > 0)
         batch = float(items.get(key, {}).get("batch", 1.0))
         if not out and abs((made if np.isfinite(made) else sold) - rec) <= batch:
             continue
@@ -689,7 +746,11 @@ def read_predictions(shadow_dir, date_from=None, date_to=None):
 
 
 def read_overrides(shadow_dir, date_from=None, date_to=None):
-    """What the kitchen really made, hand-keyed from the returned paper sheet."""
+    """What the kitchen really made, hand-keyed from the returned paper sheet.
+
+    Append-only, like the prediction log: the LAST row for a (date, item) wins, so a
+    correction is a second entry and the first one stays readable underneath it.
+    """
     root = os.path.join(shadow_dir, "overrides")
     if not os.path.isdir(root):
         return pd.DataFrame(columns=OVERRIDE_COLUMNS)
@@ -703,6 +764,227 @@ def read_overrides(shadow_dir, date_from=None, date_to=None):
     if df.empty:
         return df
     return df.drop_duplicates(["date", "item"], keep="last").reset_index(drop=True)
+
+
+# ---- the paper sheet, keyed back in ----
+
+# The kitchen's own pen. It is deliberately not one of ht.schema.SELLOUT_SOURCES: those
+# name rules a system applied to an export, and this one names a person reading a page.
+SHEET_SELLOUT_SOURCE = "sheet"
+AFFIRMATIVE = ("y", "yes", "soldout", "out", "circled")
+
+
+def parse_time(text):
+    """The SOLD OUT AT cell as a person writes it: 14:30, 2:30pm, 2pm, 1430 -- or "yes".
+
+    Returns "" for an empty cell or a written negative, "HH:MM" for a time, "yes" for a bare
+    affirmative (the sheet asks for a time and somebody will circle the item instead), and
+    None for anything it cannot read -- which the caller reports rather than guessing at,
+    because a guessed sellout time is a fabricated observation.
+
+    "0", "na", "n/a" and "none" are read as negatives. "0" used to parse as a sellout at
+    00:00, which is a fabricated observation: a prepared-foods case is not open at midnight,
+    and somebody writing 0 in a box that asks for a time means "it did not". A bare hour
+    ("9") is still read on a 24-hour clock and may be off by twelve -- the time is recorded
+    and never computed on, and refusing it would throw away the whole returned sheet.
+    """
+    s = str(text or "").strip().lower().replace(".", "").replace(" ", "")
+    if not s or s in ("-", "n", "no", "0", "na", "n/a", "none"):
+        return ""
+    if s in AFFIRMATIVE:
+        return "yes"
+    m = re.fullmatch(r"(\d{1,2}):?(\d{2})?(am|pm)?", s)
+    if not m:
+        return None
+    hour, minute, half = int(m.group(1)), int(m.group(2) or 0), m.group(3)
+    if minute > 59 or (half and not 1 <= hour <= 12) or (not half and hour > 23):
+        return None
+    if half:
+        hour = hour % 12 + (12 if half == "pm" else 0)
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _item_index(items):
+    """Config key or printed name -> config key. The person holding the sheet reads a name.
+
+    The TRUNCATED printed name is registered too: the sheet's ITEM column is
+    SHEET_ITEM_WIDTH characters, so a store with an ordinary POS description
+    ("Rotisserie Chicken Lemon Pepper") reads back a name the config does not contain, and
+    refusing it loses the whole sheet -- over a column width.
+    """
+    idx = {str(k).lower(): str(k) for k in items}
+    for k, it in items.items():
+        idx.setdefault(str(it["name"]).lower(), str(k))
+    # only where the truncation is still unambiguous: two names that shorten to the same
+    # 18 characters would silently file one item's production number under the other
+    short = collections.Counter(str(it["name"])[:SHEET_ITEM_WIDTH].strip().lower()
+                                for it in items.values())
+    for k, it in items.items():
+        name = str(it["name"])[:SHEET_ITEM_WIDTH].strip().lower()
+        if short[name] == 1:
+            idx.setdefault(name, str(k))
+    return idx
+
+
+def parse_entries(lines, items):
+    """`item, made, sold out at, note` per line -> (rows, errors). One format, both intakes.
+
+    The prompt builds these same lines, so a piped file and a person at a terminal are
+    validated by exactly one piece of code. Nothing is written unless every line parses: a
+    half-keyed sheet that looks entered is worse than one that obviously is not.
+    """
+    idx = _item_index(items)
+    rows, errors, seen = [], [], set()
+    for n, raw in enumerate(lines, 1):
+        line = str(raw).lstrip("\ufeff").strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if parts[0].lower() in ("item", "item_name"):
+            continue                       # a header row pasted along with the data
+        key = idx.get(parts[0].lower())
+        if key is None:
+            near = [str(k) for k, it in items.items()
+                    if parts[0] and str(it["name"]).lower().startswith(parts[0].lower())]
+            hint = f" -- did you mean {near[0]}?" if near else ""
+            errors.append(f"line {n}: {parts[0]!r} is not an item in the items config{hint}")
+            continue
+        if key in seen:
+            errors.append(f"line {n}: {key} was already entered on an earlier line")
+            continue
+        made = ""
+        if len(parts) > 1 and parts[1]:
+            try:
+                made = float(parts[1])
+            except ValueError:
+                made = float("nan")
+            if not np.isfinite(made) or made < 0:
+                errors.append(f"line {n}: made {parts[1]!r} is not a quantity")
+                continue
+        sold_out = parse_time(parts[2]) if len(parts) > 2 else ""
+        if sold_out is None:
+            errors.append(f"line {n}: sold out at {parts[2]!r} is not a time -- write it as "
+                          "14:30, 2:30pm or 1430, or 'yes' if it sold out and nobody wrote "
+                          "the time, or leave it blank (or 'no') if it did not sell out")
+            continue
+        seen.add(key)
+        rows.append(dict(item=key, actual_produced=made, sold_out_at=sold_out,
+                         note=", ".join(parts[3:]) if len(parts) > 3 else ""))
+    return rows, errors
+
+
+def prompt_entries(items, keys, said=None, ask=input, echo=print):
+    """One item at a time, in the order the paper printed them, at a back-room terminal."""
+    said = said or {}
+    echo("Type what the kitchen wrote. Blank = nothing written there. Ctrl-C or Ctrl-D\n"
+         "abandons: nothing is written until every line parses.")
+    lines = []
+    for key in keys:
+        it = items[key]
+        hint = (f" (sheet said {_fmt_qty(said[key], it.get('unit', 'each'))})"
+                if key in said else "")
+        made = str(ask(f"{it['name']}{hint} - made: ")).strip()
+        out = str(ask("    sold out at (blank if it did not): ")).strip()
+        if made or out:
+            lines.append(f"{key},{made},{out}")
+    return lines
+
+
+def entry_order(shadow_dir, for_date, items):
+    """Item keys in the order the SHEET printed them, then anything the sheet did not have.
+
+    The page is day-fresh departments first (each in _sheet_rows' order), then the CARRY-OVER
+    block, then NO FORECAST -- so the prediction log's own order is the sheet's order only
+    when every item is day-fresh. Set two items' shelf life truthfully and the log opens with
+    an item printed near the foot of the page; keying one item's production number into
+    another's is exactly the silent corruption the sheet's layout exists to avoid.
+    """
+    preds = read_predictions(shadow_dir, for_date, for_date)
+    keys = [k for k in preds["item"].astype(str) if k in items] if len(preds) else []
+    if not keys:
+        return sorted(items)
+    pos = {k: i for i, k in enumerate(keys)}
+    dept = dict(zip(preds["item"].astype(str), preds["dept"].astype(str))) \
+        if "dept" in preds else {}
+    forecast = (set(preds.loc[preds["source"] == "model", "item"].astype(str))
+                if "source" in preds else set(keys))
+    multi = {k for k in keys if int(items[k].get("shelf_life_days", 1)) > 1}
+    block = {k: (0 if k in forecast and k not in multi else 1 if k in forecast else 2)
+             for k in keys}
+    ordered = sorted(keys, key=lambda k: (block[k], dept.get(k, ""), pos[k]))
+    return ordered + [k for k in sorted(items) if k not in keys]
+
+
+def _overrides_columns(path):
+    """The columns to append under, migrating a file written against an older set.
+
+    record_actuals appends, so a nine-field row under an eight-field header makes the file
+    unparseable -- and read_overrides reads every file in the directory, so one such day
+    takes down score, catch-up, weekly and the morning page's YESTERDAY block, with a pandas
+    tokenizer message that names no file. Old rows are padded with an empty sellout_source,
+    which _sheet_sellout already reads as "says nothing about sellouts", and a column
+    somebody added by hand is kept on the end rather than dropped.
+    """
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None or header == OVERRIDE_COLUMNS:
+            return OVERRIDE_COLUMNS
+        rows = [dict(zip(header, r)) for r in reader]
+    cols = OVERRIDE_COLUMNS + [c for c in header if c not in OVERRIDE_COLUMNS]
+    # written beside it and renamed over it: this file is a pilot's only record of what the
+    # kitchen made, and a rewrite interrupted half way would be the one loss it cannot recover
+    tmp = path + ".rewriting"
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, cols, extrasaction="ignore", lineterminator="\n")
+        w.writeheader()
+        for r in rows:
+            w.writerow({c: r.get(c, "") for c in cols})
+    os.replace(tmp, path)
+    return cols
+
+
+def record_actuals(shadow_dir, for_date, rows, entered_by=""):
+    """Append a returned sheet to shadow/overrides/<date>.csv and return the path.
+
+    Every row is stamped sellout_source="sheet". That stamp is what lets an EMPTY sold_out_at
+    cell count as "it did not sell out": the sheet came back with the rest of the row filled
+    in, so the blank is an observation. A hand-authored overrides file carries no such
+    promise and its blanks stay unknown -- see _sheet_sellout.
+    """
+    for_date = pd.Timestamp(for_date).normalize()
+    preds = read_predictions(shadow_dir, for_date, for_date)
+    said = dict(zip(preds["item"].astype(str), preds["rec_qty"])) if len(preds) else {}
+    root = os.path.join(shadow_dir, "overrides")
+    os.makedirs(root, exist_ok=True)
+    path = os.path.join(root, f"{for_date.date()}.csv")
+    ts = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    new = not os.path.exists(path)
+    cols = OVERRIDE_COLUMNS if new else _overrides_columns(path)
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, cols, extrasaction="ignore", lineterminator="\n")
+        if new:
+            w.writeheader()
+        for r in rows:
+            row = {c: "" for c in cols}
+            row.update(r, date=str(for_date.date()), rec_qty=said.get(str(r["item"]), ""),
+                       entered_by=entered_by, entered_ts=ts,
+                       sellout_source=SHEET_SELLOUT_SOURCE)
+            w.writerow(row)
+    return path
+
+
+def _sheet_sellout(over_row):
+    """(stockout, known, source) from a returned sheet's SOLD OUT AT cell, or None.
+
+    None means "this override row says nothing about sellouts", which is the honest reading
+    of a hand-authored file that predates this path: it was written to correct a production
+    number, and reading its empty sold_out_at as "did not sell out" would invent an
+    observation on every row of it.
+    """
+    if _cell(over_row.get("sellout_source")) != SHEET_SELLOUT_SOURCE:
+        return None
+    return (1.0 if _cell(over_row.get("sold_out_at")) else 0.0, 1.0, SHEET_SELLOUT_SOURCE)
 
 
 # ---- scoring, once ----
@@ -735,6 +1017,7 @@ def _score_rows(panel, items, shadow_dir, for_date):
         a = day.loc[key] if key in day.index else None
         rec = dict(for_date=for_date.date(), item=key, rec_qty="", par_qty="", p20="",
                    p50="", p90="", sold="", produced="", stockout="", stockout_known="",
+                   sellout_source="",
                    wasted="", is_closed="", row_status="", abs_err="", signed_err="",
                    pinball="", waste_actual_units="", waste_model_units="",
                    lost_lower_units="", source="", status="")
@@ -758,9 +1041,17 @@ def _score_rows(panel, items, shadow_dir, for_date):
         stockout = float(pd.to_numeric(a.get("stockout"), errors="coerce") or 0.0)
         known = float(pd.to_numeric(a.get("stockout_known"), errors="coerce")
                       if "stockout_known" in a else 1.0)
+        source = _cell(a.get("sellout_source")) or "unknown"
+        # the returned paper sheet outranks the export's rule: for a store with no label log
+        # it is the only sellout observation that exists, and for one with a rule it is the
+        # eyewitness. Its provenance travels into the score row so the weekly page can say so.
+        sheet = _sheet_sellout(over.loc[key]) if key in getattr(over, "index", []) else None
+        if sheet is not None:
+            stockout, known, source = sheet
         cens = stockout * known
         status = str(a.get("row_status", "ok"))
         rec.update(sold=sold, produced=produced, stockout=stockout, stockout_known=known,
+                   sellout_source=source,
                    wasted=float(pd.to_numeric(a.get("wasted"), errors="coerce")),
                    is_closed=int(pd.to_numeric(a.get("is_closed"), errors="coerce") or 0),
                    row_status=status)
@@ -877,6 +1168,22 @@ def catch_up(panel, items, shadow_dir, since=None):
 
 # ---- the weekly page ----
 
+def _scored_sellout_source(fc):
+    """Where the flags these rows were SCORED with came from, every source named.
+
+    The score row records it because a returned sheet can supply the flag on a panel whose
+    own rule is "none"; the prediction's copy only knows what the export said that morning.
+    Mixed weeks print every source rather than the majority one -- "produced_vs_sold+sheet"
+    is the truth, and a mode would hide the half the reader would want to ask about. Score
+    files written before the column existed fall back to the prediction's copy.
+    """
+    col = fc["sellout_source_sc"] if "sellout_source_sc" in fc else fc.get("sellout_source")
+    values = sorted({_cell(v) for v in (col if col is not None else [])} - {""})
+    if not values and "sellout_source" in fc:
+        values = sorted({_cell(v) for v in fc["sellout_source"]} - {""})
+    return "+".join(values) if values else "unknown"
+
+
 def _point_wape(pred, sold, keep):
     pred, sold = np.asarray(pred, dtype=float), np.asarray(sold, dtype=float)
     ok = keep & np.isfinite(pred) & np.isfinite(sold)
@@ -979,7 +1286,7 @@ def weekly_report(shadow_dir, panel, items, week_ending, weeks=1, include_backfi
     price = np.array([float(items[k]["price"]) for k in item])
     cost = np.array([float(items[k]["cost"]) for k in item])
     fresh = np.array([int(items[k].get("shelf_life_days", 1)) == 1 for k in item])
-    source = str(fc["sellout_source"].mode().iloc[0])
+    source = _scored_sellout_source(fc)
     known_share = float(known.mean()) if len(known) else 1.0
     censoring_known = bool(known_share > 0 and source != "none")
 
@@ -1005,7 +1312,13 @@ def weekly_report(shadow_dir, panel, items, week_ending, weeks=1, include_backfi
     weekly_pass.sort(key=lambda w: w["start"])
 
     ov = read_overrides(shadow_dir, start, end)
-    overrides = dict(n=int(len(ov)), share=float(len(ov) / len(fc)) if len(fc) else 0.0,
+    # the denominator is the rows this page scores, so the numerator has to be the overrides
+    # that landed on one. Now that a returned sheet enters every item every day, dividing the
+    # raw count by it printed "131% of scored rows were overridden", which is not a fact
+    keyed = set(zip(ov["date"], ov["item"].astype(str))) if len(ov) else set()
+    matched = int(sum((d, k) in keyed for d, k in zip(fc["for_date"], fc["item"].astype(str))))
+    overrides = dict(n=int(len(ov)), n_matched=matched,
+                     share=float(matched / len(fc)) if len(fc) else 0.0,
                      n_closer=None, n_compared=0)
     if len(ov):
         key = ov.set_index([ov["date"], ov["item"].astype(str)])
@@ -1061,8 +1374,12 @@ def _weekly_caveats(res, items, preds):
     c = res.get("censoring", {})
     if not c.get("censoring_known", True):
         out.append(NO_SELLOUT_CAVEAT + " Every 'uncensored' figure here is an all-rows figure.")
-    elif c.get("known_share", 1.0) < 1.0:
-        out.append(f"The sellout flag was evaluable on {c['known_share']:.0%} of scored rows.")
+    elif (c.get("known_share") or 0.0) < 1.0:
+        # a mixed week is closer to no signal than to a full one, so it keeps the same warning
+        out.append(f"The sellout flag was evaluable on {c['known_share']:.0%} of scored rows. "
+                   "On the rest, an 'uncensored' row only means nobody flagged it, and a day "
+                   "that ran out unseen pulls the quantities down the same way no sellout "
+                   "data does.")
     if res["bounds"].get("excluded_multi_day_items"):
         out.append("Excluded from the waste bound (shelf life > 1 day): "
                    + ", ".join(res["bounds"]["excluded_multi_day_items"]))
@@ -1177,14 +1494,46 @@ def format_weekly(res, fmt="text", width=WEEKLY_WIDTH):
         return "\n".join(L)
 
     m = acc["model"]
-    L += ["", "1. ACCURACY (median forecast vs sold, on days where demand was fully served)",
-          f"   {'':10s} {'wape':>9s} {'n':>7s}",
+    # The heading is decided by the rows this number COVERS, not by whether any row anywhere
+    # carried a flag. With no sellout signal every "uncensored" figure is an all-rows figure,
+    # which is what score_quantiles returns and what the JSON's censoring_known says. And one
+    # keyed-in sheet row on a panel whose rule is "none" makes the flag evaluable on 1 row of
+    # 48 -- "days where demand was fully served" over all 48 is the same run's two artifacts
+    # contradicting each other, on the one number a manager reads first.
+    cens = res.get("censoring", {})
+    censored_known = cens.get("censoring_known", True)
+    known_share = cens.get("known_share")
+    known_share = 1.0 if known_share is None else float(known_share)
+    n_known = int(round(known_share * m["n_rows"]))
+    label = "wape" if not censored_known else ("wape" if known_share >= 1.0 else "wape*")
+    if censored_known and known_share >= 1.0:
+        L += ["", "1. ACCURACY (median forecast vs sold, on days where demand was fully "
+              "served)"]
+    elif censored_known:
+        L += ["", "1. ACCURACY (median forecast vs sold, on rows nothing flagged as sold "
+              "out)",
+              f"   * the flag was evaluable on {n_known:,d} of {m['n_rows']:,d} scored rows "
+              f"({pct(known_share)}). On the rest, \"not flagged\" only",
+              "   means nobody could tell, and those rows sit in this number as if they had "
+              "been served in full."]
+    else:
+        label = "wape_all"
+        L += ["", "1. ACCURACY (median forecast vs sold, over EVERY scored row)",
+              "   No sellout data, so a day that ran out cannot be told from one that was "
+              "fully served.",
+              "   Both lines below are all-rows figures and n is every row: on a day that "
+              "sold out, sold is",
+              "   a floor on demand, so the error against it is not an error."]
+    L += [f"   {'':10s} {label:>9s} {'n':>7s}",
           f"   {'model':10s} {pct(m['wape_uncensored']):>9s} {m['n_uncensored']:>7,d}",
           f"   {'your par':10s} {pct(acc['par']['wape_uncensored']):>9s} "
-          f"{acc['par']['n']:>7,d}",
-          f"   model wape over all rows including sellouts: {pct(m['wape_all_rows'])} "
-          "(NOT a bound in either direction)",
-          f"   skill vs your par {pct(acc['skill_vs_par'])}   mean pinball "
+          f"{acc['par']['n']:>7,d}"]
+    # only when some row actually was flagged: printing the identical number twice under two
+    # different headings is how a page teaches a reader to stop reading it
+    if censored_known and m["n_uncensored"] < m["n_rows"]:
+        L.append(f"   model wape over all rows including sellouts: {pct(m['wape_all_rows'])} "
+                 "(NOT a bound in either direction)")
+    L += [f"   skill vs your par {pct(acc['skill_vs_par'])}   mean pinball "
           f"{num(m['pinball_censored'], 3)}   bias {pct(m['bias_pct'])}",
           "   your par is the trailing four same-weekday mean over OPEN days -- the same "
           "computation as the",
@@ -1222,11 +1571,12 @@ def format_weekly(res, fmt="text", width=WEEKLY_WIDTH):
           "   no upper bound on lost margin is given: bounding it needs an upper bound on "
           "demand, which",
           "   nothing observable provides",
-          f"   sellout days: store {pct(bnd['sellout_days_sq'])}   model >= "
+          f"   sellout days: store {pct(bnd['sellout_days_sq'])} (of "
+          f"{bnd.get('n_flag_evaluable', 0):,d} evaluable rows)   model >= "
           f"{pct(bnd['sellout_days_model_lower'])}, <= "
           f"{pct(bnd['sellout_days_model_upper'])}",
           "", "   BY DEPARTMENT",
-          f"   {'dept':16s} {'n':>6s} {'wape':>9s} {'bias':>9s} {'short':>9s} {'save$':>10s}"]
+          f"   {'dept':16s} {'n':>6s} {label:>9s} {'bias':>9s} {'short':>9s} {'save$':>10s}"]
     for r in res["by_dept"]:
         # by_group returns "n/a (n=k)" strings for thin groups; pass those through
         cell = lambda v, f: v if isinstance(v, str) else f(v)
@@ -1242,8 +1592,10 @@ def format_weekly(res, fmt="text", width=WEEKLY_WIDTH):
 
     ov = res["overrides"]
     L += ["", "5. OVERRIDES",
-          f"   {ov['n']} logged ({pct(ov['share'])} of scored rows)",
-          f"   on {ov['n_compared']} fully-served days the manager was closer than the sheet "
+          f"   {ov['n']} rows keyed in from returned sheets; {ov.get('n_matched', ov['n'])} "
+          f"landed on a scored row ({pct(ov['share'])} of those rows)",
+          f"   on {ov['n_compared']} fully-served item-days the manager was closer than the "
+          f"sheet "
           + (f"{ov['n_closer']} time(s)" if ov["n_closer"] is not None else "n/a")]
 
     L += ["", "EXCLUSION LEDGER  " + ", ".join(f"{k}={v}" for k, v in
@@ -1347,6 +1699,41 @@ def _cmd_morning(args):
     return 0
 
 
+def _cmd_enter(args):
+    items = ht_config.load_items(args.items)
+    for_date = pd.Timestamp(args.date).normalize()
+    preds = read_predictions(args.out, for_date, for_date)
+    if preds.empty:
+        print(f"warning: no sheet was logged for {for_date.date()}; recording it anyway",
+              file=sys.stderr)
+    if args.file == "-" or (args.file is None and not sys.stdin.isatty()):
+        lines = sys.stdin.read().splitlines()
+    elif args.file:
+        # utf-8-sig: Excel's "CSV UTF-8" writes a byte-order mark, which otherwise becomes
+        # part of the first item name and refuses the whole sheet over three invisible bytes
+        with open(args.file, encoding="utf-8-sig") as f:
+            lines = f.read().splitlines()
+    else:
+        said = dict(zip(preds["item"].astype(str), preds["rec_qty"])) if len(preds) else {}
+        lines = prompt_entries(items, entry_order(args.out, for_date, items), said)
+    rows, errors = parse_entries(lines, items)
+    if errors:
+        print("nothing was written. Fix these and run it again:", file=sys.stderr)
+        for e in errors:
+            print("  " + e, file=sys.stderr)
+        return 1
+    if not rows:
+        print("nothing to record")
+        return 0
+    path = record_actuals(args.out, for_date, rows, entered_by=args.by)
+    n_out = sum(1 for r in rows if r["sold_out_at"])
+    n_made = sum(1 for r in rows if r["actual_produced"] != "")
+    print(f"{for_date.date()}: {len(rows)} item(s) -> {path}   "
+          f"{n_made} with a production number, {n_out} sold out")
+    print(f"now run: score --date {for_date.date()} to fold it into the record")
+    return 0
+
+
 def _cmd_score(args):
     panel = _panel(args.panel)
     items = ht_config.load_items(args.items)
@@ -1391,6 +1778,38 @@ def _cmd_status(args):
     return 0
 
 
+def _check_args(args):
+    """Refuse a mistyped path or date with one line, before anything is read or written.
+
+    The person running this at 5:30am is a store employee at a back-room terminal, and a
+    pandas traceback tells them nothing they can do anything about. Same contract as
+    ht.ingest's main: one sentence naming the flag, exit 1.
+    """
+    for flag, what in (("panel", "panel csv"), ("items", "items config"),
+                       ("file", "entry file")):
+        path = getattr(args, flag, None)
+        if path and path != "-" and not os.path.exists(path):
+            raise schema.HtError(f"--{flag}: no {what} at {path}")
+    art = getattr(args, "artifacts", None)
+    if art and not os.path.exists(os.path.join(art, "meta.json")):
+        raise schema.HtError(f"--artifacts: {art} has no meta.json -- point it at a trained "
+                             f"model directory, e.g. model/artifacts")
+    for flag in ("date", "week_ending", "since"):
+        value = getattr(args, flag, None)
+        if value is None:
+            continue
+        try:
+            pd.Timestamp(value)
+        except ValueError as exc:
+            raise schema.HtError(f"--{flag.replace('_', '-')}: {value!r} is not a date "
+                                 f"({exc}); write it as YYYY-MM-DD")
+    # only `morning` creates the shadow directory; for the rest a typo in --out would
+    # silently read an empty log and report a pilot that lost its record
+    if args.cmd != "morning" and not os.path.isdir(args.out):
+        raise schema.HtError(f"--out: no shadow directory at {args.out}; `morning` creates "
+                             f"it and every other command works inside it")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="shadow mode: morning sheet, log, scores, weekly")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1406,6 +1825,17 @@ def main(argv=None):
     m.add_argument("--backfill", action="store_true")
     m.add_argument("--max-staleness", type=int, default=MAX_STALENESS_DAYS)
     m.set_defaults(fn=_cmd_morning)
+
+    e = sub.add_parser("enter", help="key yesterday's returned paper sheet back in")
+    e.add_argument("--items", required=True)
+    e.add_argument("--date", required=True, help="the date ON the sheet, not today")
+    e.add_argument("--out", default="shadow")
+    e.add_argument("--file", default=None,
+                   help="'item,made,sold out at[,note]' per line; '-' or a pipe reads stdin. "
+                        "Omit it and every item is prompted for in the sheet's own order")
+    e.add_argument("--by", default=os.environ.get("USER", ""),
+                   help="who keyed it in; recorded on every row")
+    e.set_defaults(fn=_cmd_enter)
 
     s = sub.add_parser("score", help="freeze one day's verdict")
     s.add_argument("--panel", required=True)
@@ -1440,7 +1870,22 @@ def main(argv=None):
     st.set_defaults(fn=_cmd_status)
 
     args = ap.parse_args(argv)
-    return args.fn(args)
+    try:
+        _check_args(args)
+        return args.fn(args)
+    except schema.HtError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    except (OSError, ValueError) as exc:
+        # forecast() already raises these with the sentence a person needs ("panel carries
+        # actuals through ... pass --backfill"); the traceback above it was the only problem
+        print(f"{args.cmd} failed: {exc}", file=sys.stderr)
+        return 1
+    except (KeyboardInterrupt, EOFError):
+        # Ctrl-C and Ctrl-D are both a person leaving the prompt, not a bug. EOFError also
+        # arrives when the terminal closes mid-entry, which is a back room at 6am.
+        print("\nabandoned; nothing was written", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

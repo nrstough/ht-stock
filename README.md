@@ -33,16 +33,30 @@ python -m model.backtest   # replay 2025 under six policies -> results/results.j
 
 `data/store_synth.csv`, `model/artifacts/` and `results/results.json` are checked in and
 frozen: the proposal's dollar figures are settled against them, and `model.backtest` above
-reproduces `results.json` byte for byte. Regenerating them changes those figures, so
-`model.train` refuses to write into `model/artifacts/` without being told to, and an
-observed-settlement backtest refuses to write `results/results.json` at all. `sim.generate`
-has no such guard and overwrites the moment you run it:
+reproduces `results.json` byte for byte. Regenerating any of them changes those figures, so
+none of the three writers will do it by accident:
 
 ```bash
-python -m sim.generate                              # NO GUARD: overwrites data/store_synth.csv
-python -m model.train --artifacts .rehearsal/art    # train somewhere safe
-python -m model.train --force-frozen                # replace the published checkpoint
+python -m sim.generate --out .rehearsal/synth.csv   # writing the frozen CSV needs --force-frozen
+python -m model.train --artifacts .rehearsal/art    # writing model/artifacts/ needs --force-frozen
+python -m model.backtest --policies dl,naive        # refused: that run is not the frozen replay
+python -m model.backtest --settlement observed --out .rehearsal/real.json   # fine: its own --out
 ```
+
+The first two refuse the frozen *path* and take `--force-frozen`. The third cannot work that
+way, because `python -m model.backtest` with no arguments **is** the provenance of
+`results.json` and has to go on reproducing it — so it refuses the *configuration* instead:
+anything that would change the numbers (a `--panel`, a different split, a policy subset,
+another `--artifacts` or `--items`, observed settlement) has to name its own `--out`. Before
+that guard existed, `--policies dl,naive` silently replaced the six-policy file with a
+two-policy one. And because a retrained checkpoint moves the numbers with no flag to notice
+it by, the plain command checks the bytes as well: it writes `results.json` only while it
+still reproduces it, and refuses with the diff to make rather than replacing it quietly.
+
+Because the generator will write anywhere it is pointed, one more claim is checkable:
+regenerating into scratch reproduces the frozen CSV byte for byte — `cmp data/store_synth.csv
+.rehearsal/synth.csv` is silent — which is what makes "the seed is fixed" a provenance claim
+rather than a comment.
 
 Model: GRU encoder over each item's trailing 28 days + item embeddings + calendar/weather
 covariates → 11 demand quantiles (pinball loss, censored on sellout days, since sales only
@@ -58,27 +72,47 @@ store can also produce.
 
 **It has never seen real data.** What has been run is a dress rehearsal: the synthetic store
 exported as a raw, real-shaped store file with the simulation-only columns stripped, the columns
-renamed, and deliberate dirt added (cp1252, a report title block, `MM/DD/YY`, parenthesised
-refunds, a duplicated export window, a multi-day outage, random-weight barcodes, an item number
-that changes mid-history), then the whole real chain run over it:
+renamed, and deliberate dirt added (CRLF and a declared cp1252 encoding, a report title block and
+a `DEPT TOTAL` footer, `MM/DD/YY`, parenthesised refunds, a duplicated export window, a multi-day
+outage, random-weight barcodes, an item number that changes mid-history, an unmapped code, a
+weather condition no alias table knows, and the same report as the district office runs it —
+a `STORE` column and a second store's rows), then the whole real chain run over it:
 
 ```bash
-bash scripts/rehearse.sh          # ~2 min; --fast for the 6-epoch CI configuration
+bash scripts/rehearse.sh          # 3m04 on 4 CPUs here; --fast for the 6-epoch CI configuration
 ```
 
-That writes only under `.rehearsal/` and fails on a one-byte change to the frozen artifacts.
+It fails on a one-byte change to the frozen artifacts. It writes under `.rehearsal/` with one
+exception: step 9 re-runs the frozen backtest, which rewrites `results/results.json` — the file
+is copied first, compared byte for byte, and restored if it ever differs.
 The individual steps, against any canonical panel:
 
 ```bash
 python -m ht.ingest   --mapping MAP.json --items ITEMS.json --out panel.csv --report ingest.json
-python -m ht.validate --panel panel.csv --items ITEMS.json --mapping MAP.json
+python -m ht.validate --panel panel.csv --items ITEMS.json --mapping MAP.json \
+    --ingest-report ingest.json
 python -m model.train --panel panel.csv --items ITEMS.json --spec auto --artifacts artifacts/
 python -m model.evaluate --panel panel.csv --artifacts artifacts/ --items ITEMS.json --split test
+
+# the daily loop: print it, the kitchen writes on it, key it back in, score it
 python -m model.shadow morning --panel panel.csv --artifacts artifacts/ --items ITEMS.json \
     --date 2026-03-02 --out shadow --format both
+python -m model.shadow enter   --items ITEMS.json --date 2026-03-02 --out shadow --by kmurphy
+python -m model.shadow score   --panel panel.csv --items ITEMS.json --date 2026-03-02 \
+    --out shadow
 python -m model.shadow weekly  --panel panel.csv --items ITEMS.json --artifacts artifacts/ \
     --week-ending 2026-03-07 --out shadow
 ```
+
+`--spec` is required whenever `--panel` is: `model.train` and `model.backtest` refuse to pick a
+split for you, because the frozen default boundaries are the simulator's own dates. `enter` reads
+`item, made, sold out at[, note]` per line — from a pipe, a file (`--file`), or an item-by-item
+prompt that walks the page in the order it printed (departments, then CARRY-OVER, then NO
+FORECAST) showing what it said — and writes `shadow/overrides/<date>.csv`. The item may be
+typed as the sheet printed it, truncated ITEM column and all. Nothing is
+written unless every line parses. On a row keyed in that way, and only there, an **empty** "sold
+out at" cell counts as "it did not sell out", which is what lets a store with no sellout column
+in its export measure accuracy on fully-served days at all.
 
 `MAP.json` and `ITEMS.json` start as `config/source_mapping.example.json` and
 `config/items.example.json`. `docs/DATA_CONTRACT.md` is what a store's category manager or IT
@@ -130,8 +164,9 @@ The whole app is a single file with no dependencies, no build step, and no serve
   by design.
 - **Annualized baseline** = weekly × 52. This ignores seasonality; the app says so wherever the
   number appears.
-- **Recovery scenarios** = annualized × 10% / 15% / 20%, the typical first-year range for retail
-  perishable waste-reduction pilots. Pitch the middle, not the top.
+- **Recovery scenarios** = annualized × 10% / 15% / 20%. That band is a commonly quoted
+  first-year range for perishable waste pilots; nothing in this repo measures it, so it is an
+  expectation, not a result. Pitch the middle, not the top.
 
 ## Roadmap
 
@@ -149,16 +184,36 @@ The whole app is a single file with no dependencies, no build step, and no serve
   batch sizes, and whether any record of daily production exists at all.
 - **Phase 3:** shadow mode — the model prints its morning sheet, nobody follows it, and its
   forecasts are scored against reality for four weeks. The commands exist
-  (`python -m model.shadow morning|score|weekly`), the prediction log is append-only, and the
-  five go/no-go criteria are fixed in advance and printed on every weekly report from week one.
-- **Phase 4:** live pilot with a measured before/after against the Phase 1 baseline. Only if all
-  five gates read PASS.
+  (`python -m model.shadow morning|enter|score|weekly`), the prediction log is append-only, and
+  the five go/no-go criteria are fixed in advance and printed on every weekly report from week
+  one. `enter` is the return path: what the kitchen wrote on the printed sheet goes back in by
+  hand, which for a store whose export carries no sellout column is the only way accuracy on
+  fully-served days can be measured at all.
+- **Phase 4:** live pilot with a measured before/after against the Phase 1 baseline. The
+  baseline is not re-keyed: `python -m ht.ingest --logger-backup <the JSON from Setup > Data >
+  Download backup>` folds this app's logged markouts into the panel's `wasted` column. The
+  precedence is stated, applies cell by cell, and is what keeps the headline number honest — a
+  waste cell the export itself supplied wins, then the logger, then `produced - sold` for
+  day-fresh items only. Cell by cell matters: a shrink report covering one department is
+  ordinary, and it must not switch the derivation off for every other item in the panel. The
+  ingest report says how many cells came from each (`waste_cells`).
+  So the logger does replace a `produced - sold` figure, which is arithmetic on a label-printer
+  proxy, and it never *adds* to a waste number the export reported (two records of one markout,
+  summed, would double exactly the number being claimed); those collisions keep the export's
+  figure and are reported with both. Logged item-days outside the export's date range, logger
+  items matching no configured item, repeated entry ids and unreadable dates are counted and
+  named rather than folded in, and a backup where nothing matched is refused. `scripts/rehearse.sh`
+  does not exercise this path — there is no logger backup in the mock export — so it is covered
+  by `tests/test_ingest_logger.py` and by hand. Only if all five gates read PASS.
 
-Two things the rehearsal deliberately does **not** establish. The published checkpoint does not
+Three things the rehearsal deliberately does **not** establish. The published checkpoint does not
 transfer — it is shape-locked to these nine items, so Phase 2 means retraining, not reusing.
-And on the synthetic panel every candidate sellout rule agrees on every row, because the
-simulator defines them as the same event, so a green rehearsal says nothing about which rule a
-real store needs.
+On the synthetic panel every candidate sellout rule agrees on every row, because the simulator
+defines them as the same event, so a green rehearsal says nothing about which rule a real store
+needs. And `tools/make_mock_export.py` and `ht/ingest.py` were written in this repo against each
+other: the same person chose the dirt and the handling, so the rehearsal tests an importer
+against its own author's imagination, and the first real export will break in a way nobody here
+thought of.
 
 ## A note on data and permission
 

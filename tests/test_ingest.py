@@ -452,3 +452,109 @@ def test_a_blank_units_cell_stays_null_whether_or_not_the_item_has_a_hole():
         out = grid(hole)
         assert pd.isna(out.loc[pd.Timestamp("2026-01-02"), "sold"]), hole
     assert float(grid(True).loc[pd.Timestamp("2026-01-05"), "sold"]) == 0.0   # inserted, zero
+
+
+# ---- report furniture in the middle of the file ----
+
+# two shapes of report furniture, both of which DATA_CONTRACT tells the store are fine:
+# a subtotal with no date at all, and one the report dates and leaves the item number blank
+SUBTOTAL_ROWS = ['BAKERY SUBTOTAL,,,999,"$9,999.00"',
+                 '01/20/25,,BAKERY SUBTOTAL,999,"$9,999.00"']
+
+
+def _insert_subtotal(root):
+    path = os.path.join(root, "MOVEMENT.CSV")
+    with open(path, "rb") as fh:
+        lines = fh.read().decode("cp1252").split("\r\n")
+    lines[20:20] = SUBTOTAL_ROWS
+    with open(path, "wb") as fh:
+        fh.write("\r\n".join(lines).encode("cp1252"))
+
+
+def test_a_blank_item_number_never_reaches_a_report_as_a_float(export):
+    """A float NaN key beside string codes breaks sorted() and json.dump(sort_keys=True).
+
+    Both crash sites are on the store's own path: the --report write, and the repair INFO
+    the validation page prints. The panel was fine; the page describing it was a traceback.
+    """
+    _insert_subtotal(export["root"])
+    panel, report = ingest.ingest(export["mapping"], export["items"], root=export["root"])
+
+    codes = report["files"][0]["unmapped_codes"]
+    assert all(isinstance(k, str) for k in codes)
+    assert ingest.BLANK_CODE in codes                  # named, not printed as "nan"
+    json.dumps(report, sort_keys=True, default=str)    # this used to raise TypeError
+    assert len(panel)
+
+
+def test_the_ingest_command_writes_the_panel_before_anything_that_can_fail(export, tmp_path):
+    out, rep = str(tmp_path / "p.csv"), str(tmp_path / "r.json")
+    _insert_subtotal(export["root"])
+    rc = ingest.main(["--mapping", export["mapping_path"], "--items", export["items_path"],
+                      "--root", export["root"], "--out", out, "--report", rep, "--quiet"])
+    assert rc in (0, 2)
+    assert os.path.exists(out)                         # the documented recovery needs it
+    assert json.load(open(rep))["files"][0]["rows_in"] > 0
+
+
+def test_the_dropped_line_buckets_add_up_to_their_own_total(export):
+    """Parts that exceed the whole, on the page a category manager reconciles against."""
+    from ht import validate as ht_validate
+
+    _insert_subtotal(export["root"])
+    panel, report = ingest.ingest(export["mapping"], export["items"], root=export["root"])
+    entry = report["files"][0]
+    parts = (int(entry["rows_bad_date"]) + int(sum(entry["unmapped_codes"].values()))
+             + int(sum(entry["excluded_codes"].values())) + int(entry["rows_other_store"]))
+    assert parts == int(entry["rows_in"]) - int(entry["rows_kept"])
+
+    result = ht_validate.validate(panel, export["items"], ingest_report=report)
+    line = [f for f in result["findings"] if f.check == "repair_rows_dropped"][0]
+    assert str(parts) in line.message
+
+
+def test_store_without_a_store_column_would_relabel_rather_than_filter(export):
+    """--store on a file with no store column stamps the number on every row.
+
+    The panel is then internally consistent and attributed to a store whose sales it does
+    not contain, and nothing downstream can detect it.
+    """
+    with pytest.raises(schema.IngestError) as exc:
+        ingest.ingest(export["mapping"], export["items"], root=export["root"], store="0456")
+    assert "columns.<role>.store" in str(exc.value) and "0123" in str(exc.value)
+
+
+# ---- the waste ladder is per cell, as the contract states it ----
+
+def _add_partial_waste_file(root, mapping, days=6):
+    """A shrink report that covers the first few days only -- a department report, or a
+    six-month one, is the ordinary shape."""
+    rows = ["WASTE DT,ITEM NBR,UNITS"]
+    for i in range(days):
+        day = START + dt.timedelta(days=i)
+        rows.append(f"{day:%m/%d/%y},330901,3")
+    with open(os.path.join(root, "SHRINK.CSV"), "w", encoding="utf-8") as fh:
+        fh.write("\n".join(rows) + "\n")
+    mapping = json.loads(json.dumps(mapping, default=str))
+    mapping["files"].append({"role": "waste", "path": "SHRINK.CSV"})
+    mapping["columns"]["waste"] = {"date": "WASTE DT", "item_code": "ITEM NBR",
+                                   "units": "UNITS"}
+    return mapping
+
+
+def test_a_partial_waste_report_does_not_switch_off_the_rest_of_the_panel(export, tmp_path):
+    raw = json.loads(open(export["mapping_path"]).read())
+    raw = _add_partial_waste_file(export["root"], raw)
+    (tmp_path / "mapping2.json").write_text(json.dumps(raw), encoding="utf-8")
+    mapping = config.load_mapping(str(tmp_path / "mapping2.json"), export["items"])
+
+    panel, report = ingest.ingest(mapping, export["items"], root=export["root"])
+    base, _ = ingest.ingest(export["mapping"], export["items"], root=export["root"])
+
+    # the export's own six cells win where it has them, and produced - sold still fills the
+    # rest: one department's shrink report used to leave the panel with six waste numbers
+    assert int(panel["wasted"].notna().sum()) >= int(base["wasted"].notna().sum())
+    day = panel[(panel.item == "bread") & (panel.date == pd.Timestamp(START))]
+    assert float(day["wasted"].iloc[0]) == 3.0
+    assert report["waste_cells"]["export"] == 6
+    assert report["waste_cells"]["derived"] > 100

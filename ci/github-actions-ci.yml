@@ -49,8 +49,10 @@ jobs:
 
       # The real-data chain end to end: mock export -> ingest -> validate -> train ->
       # evaluate -> shadow replay -> degraded no-sellout run -> byte-identical backtest.
-      # Everything it writes lands under .rehearsal/, and it exits non-zero on a one-byte
-      # change in results/results.json.
+      # Everything it writes lands under .rehearsal/ with one exception: step 9 re-runs the
+      # frozen backtest, which rewrites results/results.json in place -- the file is copied
+      # first, compared byte for byte and restored if it ever differs. It exits non-zero on a
+      # one-byte change in results/results.json.
       - name: dress rehearsal on a mock store export
         run: bash scripts/rehearse.sh --fast
 

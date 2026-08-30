@@ -88,7 +88,22 @@ KEY = ("store", "item", "date")
 SIM_ONLY = ("true_demand", "true_mean", "lost_sales")
 WEATHER_KINDS = ("sunny", "cloudy", "rain", "snow", "unknown")
 ROW_STATUS = ("ok", "closed", "partial", "not_carried", "missing", "suspect")
+# What a PANEL column may say. model/shadow.py records a fifth source, "sheet", for a
+# sellout a person read off a returned morning sheet; it stays out of this tuple on purpose,
+# because it names a person reading a page rather than a rule applied to an export, and it
+# never reaches a panel column. Writing it back into a panel means adding it here first.
 SELLOUT_SOURCES = ("produced_vs_sold", "flag", "none", "unknown")
+
+# One condition, three layers: ht.ingest refuses a district file, ht.validate errors on a
+# district panel, and model.features refuses one that reached build() without either. They
+# describe the mechanism in their own terms but must offer the SAME way out, so the way out
+# is written once, here beside the key store is part of.
+ONE_STORE_REMEDY = (
+    "Re-run the item movement report for the one store you are piloting, or map "
+    "columns.<role>.store to the raw header carrying the store number and re-run "
+    "`python -m ht.ingest --store <number>`; without that column mapped, ingest stamps "
+    "mapping.store on every row and the district is summed onto one store's series "
+    "invisibly.")
 
 ENUMS = {"weather": WEATHER_KINDS, "row_status": ROW_STATUS,
          "sellout_source": SELLOUT_SOURCES}

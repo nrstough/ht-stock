@@ -3,8 +3,9 @@
 One model for every item: a GRU encodes each item's trailing 28 days
 (sales, sellouts, weather), a learned item embedding carries item identity,
 and tomorrow's known covariates (calendar, holidays, weather forecast) join
-at the head. The output is 9 demand quantiles, monotone by construction
-(first quantile + cumulative softplus increments), trained with pinball loss.
+at the head. The output is one quantile per features.TAUS -- 11 of them --
+monotone by construction (first quantile + cumulative softplus increments),
+trained with pinball loss.
 
 Censoring: on sellout days the observed sales are only a lower bound of
 demand, so the loss keeps only the under-prediction penalty there.

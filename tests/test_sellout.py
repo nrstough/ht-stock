@@ -1,10 +1,13 @@
 """Three sellout rules, one chosen explicitly, no fallback chain.
 
-The design tunes for PRECISION because the asymmetry is measured: missing a sellout biases
-production DOWN 1-8% and fails safe, while inventing one inflates production 1-4% and that
-inflation is pure added waste, invisible because no sellouts are then observed. So NaN
-production must yield stockout_known=0 and never stockout=1, and the two rejected rules
-must be refused by name rather than quietly approximated.
+The design tunes for PRECISION because of the asymmetry the loss has by construction, which
+is argued rather than measured: missing a sellout leaves the model fitting censored sales, so
+production runs low and fails safe, while inventing one widens the fitted distribution and
+inflates production -- pure added waste, and invisible, because no sellouts are then observed.
+Neither side's size is pinned by a test here; docs/REAL_DATA_READINESS.md reports the one
+experiment that measured the first direction. So NaN production must yield stockout_known=0
+and never stockout=1, and the two rejected rules must be refused by name rather than quietly
+approximated.
 """
 import json
 

@@ -22,9 +22,11 @@ Two years sounds like a lot for a 90-day pilot. It is not history for its own sa
 model learns each item's weekday shape, its season, and its holidays, and there is only
 one Thanksgiving per year to learn from. Most chains keep 2-3 years of item movement
 online without an IT project. If you can only reach 12 months, say so — the tool runs,
-it just cannot see an annual season. The hard floor is 126 days of history to train at
-all, and 84 days of selling history for any individual item; below that the tool refuses
-rather than printing a number it cannot stand behind.
+it just cannot see an annual season. The default ask is 126 days of history to train at all
+and 84 days of selling history for any individual item. There are two documented reduced
+modes below that — 98 days with no held-out test window, and 70 days (56 per item) in an
+explicitly *provisional* short-history mode — and below the floor of whichever mode you ask
+for, the tool refuses rather than printing a number it cannot stand behind.
 
 **The pilot's 6 weeks of logging are not a training set.** They are the validation
 window. Training needs the historical export. This is the single most common
@@ -40,7 +42,7 @@ The report is usually called *item movement*, *product movement*, *PLU movement*
 | We need | Typically called | What we do with it | If you cannot supply it |
 |---|---|---|---|
 | **Business date** | BUS DT, TRAN DATE, DAY | Every calendar feature: weekday, season, holiday, payday. | Fatal. There is no forecast without a date. |
-| **Store number** | STORE, LOC, SITE | Labels the panel. One store is fine. | We label it `default`. No impact. |
+| **Store number** | STORE, LOC, SITE | Labels the panel, and picks one store out of a district report. | If your report is one store, none. If it covers a district and the column is missing, we would sum the district onto one store's series and nobody could see it — so say which it is. |
 | **Item number** | ITEM NBR, PLU, UPC, SKU | The join key for everything. | Fatal. A description alone is not stable enough to key on. |
 | **Item description** | ITEM DESC | Human check that we mapped the number to the right thing, and a backstop when an item number changes. | Minor. Mapping gets harder to review. |
 | **Department** | DEPT, CATEGORY | Grouping on reports only. Never a model input. | None. We take department from our own item sheet. |
@@ -82,20 +84,41 @@ printed per item per day"), which most stores already have and nobody looks at.
 - A label log undercounts on the days the kitchen ran a second batch nobody printed for.
   That is expected: those days are counted and reported, and only an implausible share of
   them (`production.max_overrun_share`, default 2%) blocks training.
-- Without it: there is **no measured waste baseline at all**. The pilot can still show
-  forecast accuracy, but it cannot say "this would have cut waste by at least $X" —
+- Without it: there is **no measured waste baseline at all** from the export. The pilot can
+  still show forecast accuracy, but it cannot say "this would have cut waste by at least $X" —
   the sentence the whole business case rests on. It also forces the sold-out signal to
   "none" (see below).
+- The one substitute we already have is the Phase-1 waste logger. Its backup JSON folds
+  straight into the panel's waste column: `python -m ht.ingest --logger-backup backup.json`
+  (repeatable, one per phone). The precedence is stated rather than implied — **a waste column
+  your export supplies wins, then the logger, then `made - sold`** — cell by cell, so a shrink
+report that only covers the bakery, or only the last six months, leaves the rest of the panel
+on `made - sold` rather than switching it off. So the logger does replace
+  a `made - sold` figure, which is arithmetic on a label count; it never *adds* to waste your
+  own report gave us, because two records of one markout summed would double exactly the number
+  being claimed. Those collisions keep your figure and are printed with both numbers. Logged
+  item-days outside the export's date range, logger items that match no item on the sheet in
+  section 6, repeated entry ids and unreadable dates are all counted and named, and a backup
+  where nothing matched at all is refused rather than folded in as an empty baseline.
 
 ### b. Unit cost
 
 - With it: the production recommendation is set by the real trade-off between the cost of
   one too many and the margin on one too few.
-- Without it: we impute cost from a department gross-margin percentage you give us, mark
-  those items `cost_imputed`, and **every report that quotes their dollars prints the
-  assumption**. The forecast is unaffected; the recommended quantity is built on a guess,
-  and the guess goes straight into the recommendation. This is often a more sensitive ask
-  than sales — if the answer is no, say so and we will use margin percentages instead.
+- Without it: the number is checkable, not automatic. `ht/config.py` requires a cost on
+  every item, so nothing imputes one for you. The analyst writes `cost = price x (1 -
+  margin)` into the items file, sets `cost_imputed` on those items, and puts the margin in
+  `mapping.items.dept_gross_margin`. `ht.ingest` then **re-derives** that cost from the
+  margin and **refuses the run** if the two disagree by more than a cent, if the item's
+  department has no margin, or if a margin was typed as `58` instead of `0.58`. It prints
+  `COST IMPUTED <item>: cost X is price Y x (1 - Z% <dept> margin)` in the ingest summary
+  and records it in the report. Three of the four things you will be shown then repeat the
+  assumption in their own words — the daily morning sheet, the weekly shadow report, and
+  `model.evaluate`. The fourth, the `model.backtest` policy table, quotes dollars and does
+  **not** print it; read that table with the ingest summary beside it. The forecast is
+  unaffected; the recommended quantity is built on a guess, and the guess goes straight into
+  the recommendation. This is often a more sensitive ask than sales — if the answer is no,
+  say so and we will use margin percentages instead.
 
 ### c. A sold-out signal
 
@@ -104,15 +127,31 @@ When an item runs out at 2pm, that day's sales are not that day's demand — the
 forecast sell-outs rather than demand.
 
 Anything that marks an item-day as sold out works: an out-of-stock scan log, a "sold out"
-button on the scale, a zero-out event, or the paper morning sheets from shadow mode with
-the sell-out time circled. If you supply a production count (a), we derive this for free
-and need nothing more.
+button on the scale, or a zero-out event. If you supply a production count (a), we derive
+this for free and need nothing more.
+
+There is a fourth source that needs no system at all, and during the shadow phase it is the
+one most stores will actually use: **the paper morning sheet, keyed back in.** The sheet
+prints a `SOLD OUT AT` box beside every item and says "Circle anything that sold out and
+write the time." At the end of the day somebody types the sheet back, one line per item, at
+a prompt that walks the page department by department and shows what the sheet said:
+
+```bash
+python -m model.shadow enter --items ITEMS.json --date 2026-03-02 --out shadow --by kmurphy
+```
+
+That is a person at a keyboard, not an import. It reads `14:30`, `2:30pm`, `1430`, `930am`,
+`2pm`, or a bare `yes` for an item circled with no time; anything else is refused by line
+number and nothing is saved until the whole sheet parses, because a guessed sell-out time is
+an invented observation. Two minutes a day, every day — which is a real cost, and the one
+most likely to be the thing that fails. It is also, for a store with no sellout column, the
+only way the pilot can measure accuracy on fully-served days at all.
 
 - Without any of it: a first-class, supported mode. We set the signal to `none` and say
-  so on every artifact. Consequence, stated plainly: **recommended quantities run roughly
-  1-8% low on the busiest days**, worst on the items that sell out most. We do **not**
-  compensate by padding the numbers — that would trade a measured, disclosed bias for an
-  unmeasured one.
+  so on every artifact. Consequence, stated plainly: **recommended quantities run low on the
+  busiest days**, worst on the items that sell out most. The direction is certain; the size
+  is not measured (see `docs/REAL_DATA_READINESS.md`). We do **not** compensate by padding
+  the numbers — that would trade a disclosed bias for a hidden one.
 
 ---
 
@@ -124,13 +163,19 @@ and need nothing more.
 | **Store hours** | Confirms a closure rather than inferring it. | As above. |
 | **Daily weather** (high temp + condition) | Hot bar loves cold days; rain suppresses traffic; the day *before* snow spikes bread. | We can source a local CSV ourselves. Nothing breaks; four inputs go quiet. |
 | **The weekly ad / promo calendar** | An ad item can double for a week. | **The largest gap in the model.** We currently see the spike and learn noise from it. Ad weeks should be excluded from accuracy reporting once we can identify them. |
-| **Shelf life per item** | Day-fresh math (`waste = made - sold`, one-day newsvendor) is only valid for one-day items. Real bread and cake are 2-5 days. | Multi-day items are labelled SHADOW ONLY, excluded from the waste figures, and still get a forecast. Better to know than to guess. |
+| **Shelf life per item** | Day-fresh math (`waste = made - sold`, one-day newsvendor) is only valid for one-day items. Real bread and cake are 2-5 days. | Multi-day items print in their own CARRY-OVER block instead of a MAKE block, are excluded from the waste figures, and still get a forecast. Better to know than to guess. |
 
 ---
 
 ## What we do not want
 
-Please **do not** include, and we will delete on receipt if it arrives anyway:
+Please **do not** include any of the following. If it arrives anyway, **I delete the file by
+hand and ask for a re-run** — that is a promise from a person, not a feature. No code here
+deletes or redacts anything: your export sits on disk exactly as you sent it. What the
+software does do is narrower and worth knowing: the panel it builds holds only the fixed
+column list in `ht/schema.py` — dates, item keys, units, dollars, calendar and weather — so
+a column you did not intend to send reaches the model nowhere. That is not the same as it
+being gone.
 
 - **Any customer data.** No loyalty numbers, no names, no addresses, no emails, no phone
   numbers, no household IDs, no basket or transaction detail, no card data of any kind.
@@ -161,7 +206,10 @@ not by editing your file. Just tell us which of it applies.
   dependency this project does not have.)
 - **Encoding and line endings:** cp1252/latin-1 and CRLF are fine. Tell us which.
 - **Title blocks and totals rows:** a three-line report header above the column names and a
-  `DEPT TOTAL` footer are fine. Tell us the row number the column names are on.
+  `DEPT TOTAL` footer are fine. Tell us the row number the column names are on. Subtotal
+  rows in the *middle* of the file are dropped and counted, whether they carry a date, an
+  item number, both or neither — a blank item number is reported as `(blank)` rather than
+  dropped silently. Mention them anyway so we look at the counts with you.
 - **Dates:** any consistent format, including `MM/DD/YY`. Tell us which — we require an
   explicit format and refuse to guess, because `3/4/25` is ambiguous and a wrong guess is
   silent and catastrophic.
@@ -227,9 +275,12 @@ date        store item        item_name           dept       dow  sold  produced
 
 What happened, line by line — all of it configuration, none of it hand-editing:
 
-- The three title lines and the `DEPT TOTAL` footer **have no parsable date, so they are
-  dropped and counted**. That is deliberate: it is how report furniture is removed without
-  a rule that could also drop a real row.
+- The three title lines and the `DEPT TOTAL` footer come off two ways, and both are
+  configuration you confirm rather than a guess. You tell us the row the column names are
+  on and how many footer rows to drop, and those are removed before anything is read. Then
+  **any row left over with no parsable date is dropped and counted** — that second rule is
+  the backstop for report furniture in the middle of a file, and it cannot take a real row
+  with it, because a real row has a date.
 - `884213` and `884219` are the same product before and after a pack change. Both map to
   `rotisserie`, so the history stays one series instead of two short ones. The `(2)` refund
   is a negative and nets: `52 - 2 = 50`.
@@ -264,14 +315,16 @@ exact shape:
 | name | `Rotisserie Chicken` | as it should print on the morning sheet |
 | department | `Hot Foods` | report grouping |
 | price | `7.99` | normal shelf price, not the ad price |
-| cost | `3.20` | or a department margin % if cost cannot be shared |
+| cost | `3.20` | required. If cost cannot be shared, give us a department margin % instead and we write `price x (1 - margin)` here and flag it — see section 2b |
 | batch | `4` | the production rounding unit: one bake, one tray, one spit |
 | unit | `each` or `lb` | so the sheet never reads 52 pounds as 52 pieces |
 | shelf life (days) | `1` | 1 = day-fresh. Bread and cake are usually 2-5 |
 
 Nine items is a good pilot scope. Items with a shelf life over one day still get a forecast,
-but they are marked SHADOW ONLY and left out of the waste math, because
-`waste = made - sold` is simply false for them.
+but they are left out of the waste math and lifted off the department MAKE blocks into a
+`CARRY-OVER ITEMS - NOT AN ORDER. CHECK WHAT IS LEFT FIRST.` block at the foot of the sheet,
+because `waste = made - sold` is simply false for them and their MAKE number is one day's
+demand with nothing subtracted for what is already on the shelf.
 
 ---
 
@@ -292,6 +345,7 @@ and it is named here as a documented extension point, not a request.
 ## Checklist
 
 - [ ] Item movement, item x day x store, 104 weeks, CSV, units **and** dollars
+- [ ] Whether that report is one store or a district, and which column carries the store number
 - [ ] The five questions above, answered in writing
 - [ ] Production or label counts, in any form, even a photographed clipboard
 - [ ] Unit cost, or department gross-margin percentages

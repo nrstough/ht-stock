@@ -31,6 +31,7 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 
 import numpy as np
 import pandas as pd
@@ -266,8 +267,10 @@ def bounds(rec_qty, sold, cens, produced, wasted, cost, price, day_fresh,
         waste_observed_units=float(sq_waste[have].sum()),
         waste_observed_cost=float((sq_waste * cost)[have].sum()),
         waste_observed_retail=float((sq_waste * price)[have].sum()),
-        # cross-check only: where the store also recorded a waste number, does the
-        # produced - sold identity agree with it?
+        # cross-check only: does the panel's own waste column agree with produced - sold?
+        # It is evidence exactly where those cells came from the store's own record -- and
+        # the panel does not carry that provenance, so read it beside ingest's waste_cells
+        # counts, which say how many cells the export supplied and how many were derived.
         waste_recorded_units=float(wasted[recorded].sum()) if recorded.any() else None,
         waste_recorded_max_abs_diff=(float(np.abs(wasted[recorded] - sq_waste[recorded]).max())
                                      if recorded.any() else None),
@@ -284,6 +287,9 @@ def bounds(rec_qty, sold, cens, produced, wasted, cost, price, day_fresh,
         # "did not sell out" would hand the model a baseline the store never had
         sellout_days_sq=(float(cens[known].mean())
                          if censoring_known and known.any() else None),
+        # the denominator of the line above, printed beside it: a rate over one row and a
+        # rate over a thousand read identically on the page unless the page says so
+        n_flag_evaluable=int(known.sum()) if censoring_known else 0,
         sellout_days_model_lower=(float((rec_qty[rec_ok] < sold[rec_ok]).mean())
                                   if rec_ok.any() else float("nan")),
         # unknown: rec_qty covered `sold`, but sold is not demand -- either because the day
@@ -342,7 +348,10 @@ def by_group(res, key, min_n=FLAG_MIN_N):
         # high-sellout department can carry 60 rows and eight uncensored ones, and printing
         # "n=60, wape 4%" beside it invites a reader to trust eight days
         if acc["n_uncensored"] < min_n:
-            label = f"n/a (n_unc={acc['n_uncensored']})"
+            # with no sellout signal there is no uncensored subset to name: every row is in
+            # the count, and calling it n_unc beside an all-rows heading invents a distinction
+            label = (f"n/a (n_unc={acc['n_uncensored']})" if p["censoring_known"]
+                     else f"n/a (n={acc['n_uncensored']})")
             rows.append(dict(group=g, n=n, n_uncensored=acc["n_uncensored"],
                              wape_uncensored=label, bias_pct=label,
                              sellout_days_model_lower=label, waste_saving_lower_cost=label))
@@ -398,12 +407,15 @@ def bias_slices(pack, slices, min_n=FLAG_MIN_N, flag_at=FLAG_BIAS_PCT):
 
 # ---- the report ----
 
-def _spec_for(meta):
-    """Score with the boundaries the checkpoint was trained on, never a fresh split."""
-    if "spec" in meta:
-        return meta["spec"]
-    # the frozen artifact predates the spec field; it was trained on the legacy layout
-    return features.legacy_spec()
+def _spec_for(meta, df, artifacts_dir):
+    """Score with the boundaries the checkpoint was trained on, never a fresh split.
+
+    The frozen artifact predates the spec field, so there the legacy layout is assumed
+    rather than read. features.spec_from_meta checks that assumption against the panel
+    and refuses when it does not hold, instead of scoring a store's 2026 export on the
+    simulator's 2024 boundaries and reporting the result as accuracy.
+    """
+    return features.spec_from_meta(meta, df, artifacts_dir)
 
 
 def _coverage_of_scoring(df, b, mask, artifacts_dir, items_path, sellout_source):
@@ -436,12 +448,12 @@ def _coverage_of_scoring(df, b, mask, artifacts_dir, items_path, sellout_source)
     )
 
 
-def _caveats(res_sellout, items, b, bnd):
+def _caveats(res_sellout, items, b, bnd, spec_assumed):
     out = []
     if not res_sellout["censoring_known"]:
         out.append("NO SELLOUT DATA: the model was fitted to sales, not demand, so these "
-                   "quantities are likely 1-8% low on the busiest days. Every 'uncensored' "
-                   "figure below is really an all-rows figure.")
+                   "quantities run low on the busiest days by an amount nothing here "
+                   "measures. Every 'uncensored' figure below is really an all-rows figure.")
     elif res_sellout["known_share"] < 1.0:
         out.append(f"The sellout flag could only be evaluated on "
                    f"{res_sellout['known_share']:.0%} of scored rows. The rest are 'nobody "
@@ -460,6 +472,13 @@ def _caveats(res_sellout, items, b, bnd):
     if b.get("spec", {}).get("stats_scope") == "train_val":
         out.append("Legacy feature spec: normalization statistics were computed over train+val, "
                    "so first and second moments of the validation window leaked into z-scoring.")
+    if spec_assumed:
+        sp = b.get("spec", {})
+        out.append("The checkpoint's meta.json records NO feature spec, so the legacy layout "
+                   f"was assumed, not read: train_end {sp.get('train_end')}, val_start "
+                   f"{sp.get('val_start')}, test_start {sp.get('test_start')}, holiday "
+                   "countdown off. Those are the simulator's own dates; every split figure "
+                   "above is cut on them.")
     out.append("The naive benchmark is model/baselines.naive_forecast, which averages the "
                "trailing four same-weekday sales with no is_closed filter, so a closed day "
                "drags it down; it is a slightly weaker benchmark than an honest par sheet.")
@@ -477,7 +496,7 @@ def evaluate(panel_path, artifacts_dir, items_path, *, split="test", date_from=N
     # the checkpoint's own normalizers and trend origin, never ones refitted from this
     # frame: a re-export that starts on a different date would otherwise silently re-z-score
     # every context window and move quantities nobody changed
-    b = features.build(df, spec=_spec_for(meta), stats=meta.get("stats"))
+    b = features.build(df, spec=_spec_for(meta, df, artifacts_dir), stats=meta.get("stats"))
     mask = np.ones(len(b["y"]), dtype=bool) if split == "all" else (b["split"] == split)
     if date_from is not None:
         mask &= b["date"] >= np.datetime64(pd.Timestamp(date_from))
@@ -560,7 +579,7 @@ def evaluate(panel_path, artifacts_dir, items_path, *, split="test", date_from=N
         bounds={k: v for k, v in bnd.items() if k not in measured_keys},
         skill=dict(vs_naive=skill(acc["dl"], acc["naive"]),
                    vs_ridge=skill(acc["dl"], acc["ridge"])),
-        caveats=_caveats(sellout, items_all, b, bnd),
+        caveats=_caveats(sellout, items_all, b, bnd, "spec" not in meta),
     )
     report["by_group"] = {
         name: by_group(pack, key).to_dict(orient="records")
@@ -628,9 +647,12 @@ def format_report(res, width=100):
              f"${_num(ms['waste_observed_cost'])} at cost   "
              f"${_num(ms['waste_observed_retail'])} at retail")
     if ms["waste_recorded_units"] is not None:
-        L.append(f"  store's own waste column {_num(ms['waste_recorded_units'])} units; "
+        L.append(f"  panel waste column {_num(ms['waste_recorded_units'])} units; "
                  f"max per-row disagreement with produced - sold "
                  f"{_num(ms['waste_recorded_max_abs_diff'], 3)}")
+        L.append("  that agreement is evidence only for cells the store's own report "
+                 "supplied; the panel does not")
+        L.append("  record which those are -- ingest's report does (waste_cells)")
 
     L += ["", "ACCURACY (median forecast vs sold, on rows where demand is exactly observed)",
           f"  {'model':10s} {'wape_unc':>10s} {'wape_all':>10s} {'bias':>9s} "
@@ -684,6 +706,25 @@ def format_report(res, width=100):
     return "\n".join(L)
 
 
+def _check_args(args):
+    """Refuse a mistyped path or date before anything is read. One line, naming the flag."""
+    for flag, what in (("panel", "panel csv"), ("items", "items config")):
+        path = getattr(args, flag)
+        if not os.path.exists(path):
+            raise schema.HtError(f"--{flag}: no {what} at {path}")
+    if not os.path.exists(os.path.join(args.artifacts, "meta.json")):
+        raise schema.HtError(f"--artifacts: {args.artifacts} has no meta.json -- point it at "
+                             f"a trained model directory, e.g. model/artifacts")
+    for flag, value in (("from", args.date_from), ("to", args.date_to)):
+        if value is None:
+            continue
+        try:
+            pd.Timestamp(value)
+        except ValueError as exc:
+            raise schema.HtError(f"--{flag}: {value!r} is not a date ({exc}); write it as "
+                                 f"YYYY-MM-DD")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="observable-only evaluation of a checkpoint")
     ap.add_argument("--panel", required=True)
@@ -697,8 +738,20 @@ def main(argv=None):
     ap.add_argument("--width", type=int, default=100)
     args = ap.parse_args(argv)
 
-    res = evaluate(args.panel, args.artifacts, args.items, split=args.split,
-                   date_from=args.date_from, date_to=args.date_to, out=args.out)
+    # a mistyped path or date is the common failure here and it is a person's mistake, not a
+    # bug: name the flag in one line and exit 1, exactly as ht.ingest's main does
+    try:
+        _check_args(args)
+        res = evaluate(args.panel, args.artifacts, args.items, split=args.split,
+                       date_from=args.date_from, date_to=args.date_to, out=args.out)
+    except schema.HtError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    except (OSError, ValueError) as exc:
+        # features.SpecMismatch and evaluate's own "no rows in split" land here; both already
+        # say what to do about it, and neither is helped by forty lines of stack
+        print(f"evaluation failed: {exc}", file=sys.stderr)
+        return 1
     print(format_report(res, args.width))
     if args.by:
         print()
