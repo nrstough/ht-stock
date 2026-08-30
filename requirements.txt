@@ -1,3 +1,21 @@
-numpy
-pandas
-torch
+# Direct dependencies only. ht/ and model/ import numpy, pandas and torch and nothing
+# else. pytest is test-only, no shipped module imports it, and it is therefore installed by
+# CI rather than declared here -- a store's IT contact installing this to run the pipeline
+# should not be handed a test framework. Versions are pinned to what
+# the pipeline was verified against, because the one number this project cannot afford to
+# move is the byte-identical results/results.json that the proposal's dollar figures rest
+# on -- and a float32 reduction can change under a numpy or torch minor release.
+#
+# TORCH IS THE CPU BUILD. Nothing here trains on a GPU: the model is a small GRU that
+# fits in about a minute on four CPU threads, and the CUDA wheels are gigabytes that CI
+# would download on every run. The default PyPI wheel for torch on Linux pulls the CUDA
+# stack in, so install torch from the CPU index FIRST and then the rest normally:
+#
+#     pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+#     pip install -r requirements.txt
+#
+# On a machine that already has a CUDA torch installed, plain `pip install -r
+# requirements.txt` is fine -- the code never asks for a device.
+numpy==2.4.6
+pandas==3.0.5
+torch==2.13.0

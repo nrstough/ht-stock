@@ -1,0 +1,28 @@
+{
+ "schema": "ht-items/1",
+ "store": "Example Store",
+ "currency": "USD",
+ "defaults": {
+  "salvage": 0.0,
+  "continuous": false,
+  "unit": "each",
+  "shelf_life_days": 1,
+  "sellout_tolerance": null,
+  "active": true
+ },
+ "items": {
+  "pizza-whole": {"name": "Whole Pizza", "dept": "Pizza", "price": 7.99, "cost": 2.60, "batch": 1},
+  "pizza-slice": {"name": "Pizza Slice", "dept": "Pizza", "price": 3.49, "cost": 0.90, "batch": 8},
+  "doughnut": {"name": "Doughnut", "dept": "Bakery", "price": 1.19, "cost": 0.25, "batch": 12},
+  "cake": {"name": "Cake", "dept": "Bakery", "price": 12.99, "cost": 4.50, "batch": 1,
+           "notes": "real cakes carry 3-5 day shelf life; the simulator is day-fresh by construction so this stays 1 here. A real store MUST set shelf_life_days before the live phase."},
+  "bread": {"name": "Bread Loaf", "dept": "Bakery", "price": 3.99, "cost": 1.10, "batch": 1,
+            "notes": "same: real bread is shelf_life_days 2-3."},
+  "rotisserie": {"name": "Rotisserie Chicken", "dept": "Hot Foods", "price": 7.99, "cost": 3.20, "batch": 4},
+  "hotbar-lb": {"name": "Hot Bar (per lb)", "dept": "Hot Foods", "price": 9.99, "cost": 3.50,
+                "batch": 5, "continuous": true, "unit": "lb"},
+  "sushi": {"name": "Sushi Roll", "dept": "Fresh Foods", "price": 8.99, "cost": 3.80, "batch": 1,
+            "notes": "often a licensed third party; confirm the sales appear in our movement report before promising it in scope."},
+  "sub": {"name": "Sub / Sandwich", "dept": "Fresh Foods", "price": 5.99, "cost": 1.80, "batch": 1}
+ }
+}

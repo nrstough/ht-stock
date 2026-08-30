@@ -1,0 +1,76 @@
+{
+ "schema": "ht-source-mapping/1",
+ "store": "0123",
+ "notes": "Mock 'Retail Pro' movement export, one file per year, plus a scale label-printer log used as the production count. Sushi is licensed and may not appear in the movement report; confirm before scoping it.",
+
+ "files": [
+  {"role": "sales", "path": ".rehearsal/raw/MOVEMENT_*.CSV", "encoding": "cp1252",
+   "delimiter": ",", "header_row": 4, "skip_footer_rows": 1,
+   "na_values": ["", "N/A", "--", "."],
+   "note": "rows 1-3 are a report title block; the last row is a DEPT TOTAL"},
+  {"role": "production", "path": ".rehearsal/raw/SCALE_LABELS.CSV", "encoding": "utf-8",
+   "delimiter": ",", "header_row": 1, "skip_footer_rows": 0,
+   "note": "labels printed per item per day: the best production proxy this store can export. ~8% of days are missing, which yields produced=NaN and stockout_known=0 there."},
+  {"role": "hours", "path": ".rehearsal/raw/STORE_HOURS.CSV", "encoding": "utf-8",
+   "delimiter": ",", "header_row": 1, "skip_footer_rows": 0},
+  {"role": "weather", "path": ".rehearsal/raw/WEATHER.CSV", "encoding": "utf-8",
+   "delimiter": ",", "header_row": 1, "skip_footer_rows": 0}
+ ],
+
+ "columns": {
+  "sales": {"date": "BUS DT", "item_code": "ITEM NBR", "item_desc": "ITEM DESC",
+            "units": "UNITS", "dollars": "NET SALES $", "cost": null},
+  "production": {"date": "PRINT DT", "item_code": "ITEM NBR", "units": "LABELS PRINTED"},
+  "hours": {"date": "DATE", "open": "OPEN", "close": "CLOSE"},
+  "weather": {"date": "DATE", "tmax_f": "TMAX", "kind": "CONDITION", "snow_tomorrow": null}
+ },
+
+ "date": {"format": "%m/%d/%y", "business_day": "store_close",
+          "note": "CONFIRM IN WRITING that the day-close cutoff is local, not UTC. A cloud BI export in UTC shifts a US store 4-5 hours and pushes evening sales into tomorrow, scrambling day-of-week, the model's strongest signal."},
+
+ "numbers": {"strip": ["$", ",", "%", " "], "parens_negative": true,
+             "decimal": ".", "units_are_dollars": false},
+
+ "items": {
+  "drop_unmapped": true,
+  "max_items": 400,
+  "random_weight_plu": {"enabled": true, "pattern": "^2(\\d{5})\\d{4}$", "plu_group": 1},
+  "map": {
+   "771002": "pizza-whole", "771015": "pizza-slice",
+   "330118": "doughnut", "330442": "cake", "330901": "bread",
+   "884213": "rotisserie", "884219": "rotisserie",
+   "00451": "hotbar-lb",
+   "550012": "sushi", "612050": "sub"
+  },
+  "alias_map": {"ROTIS CHKN LEM PEP": "rotisserie"},
+  "exclude": ["999999"],
+  "dept_gross_margin": {"Bakery": 0.62, "Hot Foods": 0.58, "Fresh Foods": 0.55, "Pizza": 0.66},
+  "split_history_note": "884219 replaced 884213 on 2025-04-02 after a pack change; both map to rotisserie so the series does not split in half and fail the short-history guard twice."
+ },
+
+ "dedupe": {"key": ["store", "item", "date"], "policy": "sum"},
+ "negatives": {"policy": "clip_zero", "max_share": 0.01},
+ "gaps": {"max_unexplained_gap_days": 3},
+
+ "closures": {
+  "dates": ["2023-12-25", "2024-12-25", "2025-12-25"],
+  "partial": {"2025-12-24": 0.60, "2025-11-27": 0.55}
+ },
+
+ "sellout": {"rule": "produced_vs_sold", "validation_labels": null,
+             "note": "waste_zero was considered and is not implemented: this store's waste record cannot distinguish a missing row from a real zero."},
+
+ "weather": {
+  "provider": "csv",
+  "kind_map": {"CLEAR": "sunny", "SUNNY": "sunny", "PARTLY CLOUDY": "cloudy",
+               "MOSTLY CLOUDY": "cloudy", "CLOUDY": "cloudy", "OVERCAST": "cloudy",
+               "FOG": "cloudy", "RAIN": "rain", "SHOWERS": "rain", "DRIZZLE": "rain",
+               "THUNDERSTORM": "rain", "T-STORM": "rain", "SNOW": "snow",
+               "SLEET": "snow", "WINTRY MIX": "snow", "FLURRIES": "snow"}
+ },
+
+ "calendar": {"country": "US", "extra_holidays_csv": null,
+              "payday_days": [1, 2, 3, 15, 16, 17]},
+
+ "price_cost": {"authority": "config", "tolerance_pct": 0.15}
+}

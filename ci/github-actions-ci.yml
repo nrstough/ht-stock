@@ -1,0 +1,67 @@
+# CI for ht-stock. GitHub blocks this repo integration from writing .github/workflows/,
+# so the file lives here: copy it to .github/workflows/ci.yml to enable it.
+#
+# CI runs the whole chain and guards the four frozen artifacts. The only training it does
+# is the rehearsal's six-epoch cap, which exists to prove the path runs end to end, not to
+# fit anything: the pytest suite is inference-only and the backtest replays a checkpoint.
+#
+# There is no network access at test time. tests/conftest.py monkeypatches socket.socket to
+# raise for every test, so an accidental fetch fails the suite rather than passing quietly
+# on a runner that happens to have a route out. pip is the only thing that touches the
+# network here.
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # CPU wheels only: the default torch wheel drags in the whole CUDA stack, which is
+      # gigabytes CI would pay for on every run and nothing here can use.
+      - name: install torch (cpu)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+
+      - name: install dependencies
+        run: python -m pip install -r requirements.txt pytest==9.1.1
+
+      - name: unit tests
+        run: python -m pytest tests/ -q -m "not slow"
+
+      - name: feature build reproduces the frozen split
+        run: python -m model.features | tee /tmp/features.txt
+
+      - name: check the frozen split counts
+        run: |
+          grep -q "train 5796 rows" /tmp/features.txt
+          grep -q "val 513 rows" /tmp/features.txt
+          grep -q "test 3276 rows" /tmp/features.txt
+          grep -q "(9585, 28, 6)" /tmp/features.txt
+          grep -q "(9585, 35)" /tmp/features.txt
+
+      # The real-data chain end to end: mock export -> ingest -> validate -> train ->
+      # evaluate -> shadow replay -> degraded no-sellout run -> byte-identical backtest.
+      # Everything it writes lands under .rehearsal/, and it exits non-zero on a one-byte
+      # change in results/results.json.
+      - name: dress rehearsal on a mock store export
+        run: bash scripts/rehearse.sh --fast
+
+      - name: backtest reproduces the published results
+        run: python -m model.backtest
+
+      - name: the frozen artifacts have not moved
+        run: |
+          git diff --exit-code -- results/results.json data/store_synth.csv \
+            model/artifacts/demandnet.pt model/artifacts/meta.json
+
+      # Inference only: replays the frozen checkpoint into a temp file and diffs the bytes.
+      - name: results.json is still reproducible byte for byte
+        run: python -m pytest tests/ -q -m slow

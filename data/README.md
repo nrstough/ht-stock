@@ -43,6 +43,42 @@ temperature preferences (hot bar loves cold days) · payday bumps · a 2%/yr tra
 trend plus sushi growing ~12%/yr · plus irreducible noise and rare unpredictable
 event days that no model should be able to learn.
 
+## Relationship to the canonical panel
+
+This file is no longer the only thing the pipeline can read. `ht/schema.py` defines a
+**canonical panel** — one row per store x item x business day — and the simulator is now just
+one producer of it. A store's raw export is the other, via `ht/ingest.py`.
+
+The two line up by construction rather than by adapter code. The canonical panel is exactly the
+17 observable columns above, with the same names, plus four provenance columns that all have
+defaults:
+
+| column | meaning | default |
+|---|---|---|
+| `store` | store key; v1 panels are single-store | `"default"` |
+| `row_status` | *why* the row looks as it does: `ok`, `closed`, `partial`, `missing`, `suspect` | `"ok"` |
+| `stockout_known` | 1 = the sellout rule could be evaluated on this row at all | `1` |
+| `sellout_source` | which rule produced the flag: `produced_vs_sold` / `flag` / `none` | `"unknown"` |
+
+So `ht.schema.conform(pd.read_csv("data/store_synth.csv"))` passes untouched: the four columns
+above are inserted at their defaults and the three simulation-only columns are dropped. That is
+the point — the model code was parameterized rather than rewritten, so the frozen results stay
+reproducible while the same code path also accepts a real store's panel.
+
+Two consequences worth knowing when reading this file:
+
+- **`sellout_source` is `unknown` here**, not `produced_vs_sold`. The simulator writes the
+  `stockout` column directly; it does not derive it from a rule. A real panel records which rule
+  fired so no downstream reader has to guess.
+- **`stockout_known` is 1 everywhere here.** A real store with a patchy production sheet gets 0
+  on the days it cannot tell, and the model then treats those rows as uncensored rather than
+  claiming a sellout it cannot see.
+
+`docs/DATA_CONTRACT.md` describes the same schema in a store's language. `tools/make_mock_export.py`
+runs the relationship backwards — it writes this CSV out as a raw, dirty, real-shaped store
+export with the simulation-only columns stripped and the columns renamed, which is what
+`scripts/rehearse.sh` then feeds through the real ingest.
+
 ## Known simplifications
 
 - Everything is day-fresh: unsold units are wasted same day. Real cakes/bread carry
@@ -51,3 +87,10 @@ event days that no model should be able to learn.
   pars with a safety pad, corrections for chronic sellouts, a directionally-correct
   holiday instinct, and basic snow/rain awareness.
 - Promotions/ads are not modeled yet (listed as an extension in the proposal).
+- Only one store, and the schema's `not_carried` row status never occurs: every item is
+  carried on every day of the three years. A real panel has items that start, stop, and come
+  back under a different item number.
+- Every candidate sellout rule agrees on every row. `stockout`, `wasted <= 0` and
+  `sold >= produced` are the same event in all 9,837 open rows, because `sim/generate.py`
+  defines them that way. This dataset therefore cannot be used to choose between sellout rules,
+  and a pipeline run that looks green on it has proved the plumbing and nothing about the rule.
