@@ -6,6 +6,8 @@ par sheets with demand forecasts. Three pieces, all in this repo:
 1. **Phase 1 — measure** (`index.html`): a phone-friendly waste logger that produces a store's
    real baseline in two weeks of use. Nobody funds "reduces waste 15%"; people fund
    "recovers $X/year at this store." This tool produces $X.
+   **Run it** (`ht/serve.py`, `web/`): the daily loop as a page a store employee opens in a
+   browser, so starting the shadow pilot does not require a terminal.
 2. **Proof of concept — predict** (`sim/`, `model/`): a synthetic 3-year store, a global quantile
    demand network, a newsvendor decision layer, and a shadow-replay backtest of the held-out
    year. Built on **zero real data** so it settles the method without touching data-permission
@@ -114,6 +116,42 @@ written unless every line parses. On a row keyed in that way, and only there, an
 out at" cell counts as "it did not sell out", which is what lets a store with no sellout column
 in its export measure accuracy on fully-served days at all.
 
+### Running the daily loop in a browser
+
+Six commands with four path flags each, one of them at 5:30am, every morning for twenty-eight
+consecutive days without missing one — because a missed morning is a hole in gate G1. That is
+the likeliest way a pilot dies, and it has nothing to do with whether the model works. So the
+same six commands are also a page:
+
+```bash
+npm --prefix web ci && npm --prefix web run build     # once
+python -m ht.serve --panel panel.csv --items ITEMS.json --artifacts artifacts/ \
+    --out shadow --store "Store 0123" --timezone America/Chicago --by kmurphy
+```
+
+Then open <http://127.0.0.1:8765> on that machine: today's sheet to print, the returned sheet
+keyed back in item by item in the order it printed, the frozen scores, and the weekly page with
+the five gates on it.
+
+It is a wrapper and nothing more — every number it shows is a number the CLI would have
+printed, and every refusal the CLI makes it makes too, in the same words. Four things about it
+are load-bearing rather than cosmetic:
+
+- **No GET writes.** `log_predictions` appends and `read_predictions` keeps the last row per
+  (`for_date`, `item`), so a page that logged on load would let a 2pm refresh replace what the
+  model said at 5:30am. Reading a sheet and making one are different buttons, and a date that
+  already has a sheet is refused rather than quietly superseded.
+- **Score refuses a day whose export has not landed.** `score_day` freezes a verdict by file
+  existence, so scoring too early writes an all-missing verdict that `catch-up` cannot repair
+  and that counts against G1 completeness for the rest of the pilot. At a terminal that is hard
+  to do by accident; behind a button it would happen every week.
+- **`--timezone` is required, not guessed.** Nothing in `model/shadow.py` computes "today", and
+  a server clock in a zone ahead of the store would default the date to tomorrow — which no
+  guard refuses, because a future date is never `backfilled`.
+- **It binds 127.0.0.1 and has no authentication.** Anyone who can reach the port can write to
+  the pilot's record, so serving it to the network needs `--allow-remote` and a deliberate
+  decision about what sits in front of it.
+
 `MAP.json` and `ITEMS.json` start as `config/source_mapping.example.json` and
 `config/items.example.json`. `docs/DATA_CONTRACT.md` is what a store's category manager or IT
 contact reads; `docs/REAL_DATA_READINESS.md` is the day-one checklist, including what is ready,
@@ -142,13 +180,16 @@ measurements and one-sided bounds instead of point estimates. Nothing in that pa
 
 ## How to use it
 
-The whole app is a single file with no dependencies, no build step, and no server.
+The waste logger is a single file with no dependencies, no build step, and no server. (The
+forecasting side has both — see **Running the daily loop in a browser** above — but it is a
+separate app, and nothing about the logger changed.)
 
 - **On a computer:** open `index.html` in any browser.
 - **On your phone (recommended):** enable GitHub Pages for this repo (Settings → Pages → deploy
   from branch), open the URL on your phone, and add it to your home screen. It behaves like an app.
 - Everything is stored in the browser's local storage **on that device only**. Nothing is uploaded
-  anywhere. Back up regularly from the Setup tab — clearing the browser clears the data.
+  anywhere — the logger has no server to upload to. Back up regularly from the Setup tab —
+  clearing the browser clears the data.
 
 ### The two-week baseline
 
@@ -183,12 +224,13 @@ The whole app is a single file with no dependencies, no build step, and no serve
   is the day-one checklist and is candid about what still needs the store — chiefly real costs,
   batch sizes, and whether any record of daily production exists at all.
 - **Phase 3:** shadow mode — the model prints its morning sheet, nobody follows it, and its
-  forecasts are scored against reality for four weeks. The commands exist
-  (`python -m model.shadow morning|enter|score|weekly`), the prediction log is append-only, and
-  the five go/no-go criteria are fixed in advance and printed on every weekly report from week
-  one. `enter` is the return path: what the kitchen wrote on the printed sheet goes back in by
-  hand, which for a store whose export carries no sellout column is the only way accuracy on
-  fully-served days can be measured at all.
+  forecasts are scored against reality for four weeks. It runs two ways: six commands
+  (`python -m model.shadow morning|enter|score|catch-up|weekly|status`) or the same six as a
+  page in a browser (`python -m ht.serve`). The prediction log is append-only, and the five
+  go/no-go criteria are fixed in advance and printed on every weekly report from week one.
+  `enter` is the return path: what the kitchen wrote on the printed sheet is keyed back in by
+  hand — at a terminal or into the browser form — which for a store whose export carries no
+  sellout column is the only way accuracy on fully-served days can be measured at all.
 - **Phase 4:** live pilot with a measured before/after against the Phase 1 baseline. The
   baseline is not re-keyed: `python -m ht.ingest --logger-backup <the JSON from Setup > Data >
   Download backup>` folds this app's logged markouts into the panel's `wasted` column. The

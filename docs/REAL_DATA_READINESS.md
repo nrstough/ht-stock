@@ -38,6 +38,7 @@ not cover them.
 | Training on a real panel | `python -m model.train --panel panel.csv --spec auto --items ITEMS.json --artifacts art/` |
 | Evaluation with no simulator truth | `python -m model.evaluate --panel panel.csv --artifacts art/ --items ITEMS.json --split test` |
 | Morning sheet, returned-sheet intake, day scoring, weekly report | `python -m model.shadow morning\|enter\|score\|catch-up\|weekly\|status` |
+| The same six, served to a browser on the store's own machine | `python -m ht.serve --panel panel.csv --items ITEMS.json --artifacts art/ --timezone America/Chicago` |
 | A district movement report filtered to one store | `python -m ht.ingest --mapping MAP.json --items ITEMS.json --store 0123 --out panel.csv` |
 | † The Phase-1 logger's markouts folded into the panel's waste | `python -m ht.ingest --mapping MAP.json --items ITEMS.json --logger-backup backup.json --out panel.csv` |
 | Policy replay with no simulator truth | `python -m model.backtest --panel panel.csv --settlement observed --spec auto --out OUT.json` |
@@ -191,6 +192,16 @@ python -m model.evaluate --panel data/panel.csv --artifacts artifacts/ \
 
 **9. Run shadow mode, every morning, for four weeks.** The sheet is logged before it is
 rendered, so a crash while printing still leaves the prediction on the record.
+
+Either drive it from a browser on the store's own machine —
+
+```bash
+npm --prefix web ci && npm --prefix web run build     # once, needs node
+python -m ht.serve --panel data/panel.csv --items ITEMS.json --artifacts artifacts/ \
+    --out shadow --store "Store 0123" --timezone America/Chicago --by kmurphy
+```
+
+— which is the same six commands with the path flags supplied once at startup, or type them:
 
 ```bash
 python -m model.shadow morning --panel data/panel.csv --artifacts artifacts/ \
@@ -436,11 +447,14 @@ training window.
   precisely so a printed sheet never inherits the defect — which is why the weekly report's
   "your par" is a harder benchmark than the backtest's "naive".
 
-- **Operator fatigue is the most likely cause of failure and no software fixes it.** The daily
-  loop asks for several commands and one hand-keyed CSV every morning for twenty-eight
-  consecutive days, in a job that starts at 5am. G1's 95% completeness threshold is realistic
-  but not easy. `catch-up` makes recovery cheap and completeness makes the gap visible; neither
-  makes anyone do it.
+- **Operator fatigue is the most likely cause of failure and software only moves it.** The
+  daily loop runs every morning for twenty-eight consecutive days, in a job that starts at 5am.
+  `python -m ht.serve` takes away the part that was several commands with four path flags each:
+  it is a page with buttons, and it enforces on the server the two orderings a tired person
+  gets wrong (a second sheet for a day, and scoring a day before its export lands). What it
+  does not do is make anyone open it. G1's 95% completeness threshold is realistic but not
+  easy; `catch-up` makes recovery cheap and completeness makes the gap visible; neither makes
+  anyone show up.
 
 ---
 

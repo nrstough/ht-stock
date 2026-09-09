@@ -4,9 +4,8 @@ The living truth for Phase 3: the model prints a morning sheet, nobody follows i
 forecasts are scored against what the store actually did. Four weeks of that produce one page
 a district manager reads, carrying five go/no-go criteria fixed in advance.
 
-This document describes the feature across every surface it has. Today that is the CLI. The
-served operator UI is being added under `docs/specs/SHADOW_OPERATOR_UI.md` and is marked
-**(planned)** below until it ships.
+This document describes the feature across every surface it has: six commands, and the same
+six served to a browser (`python -m ht.serve`, `docs/specs/SHADOW_OPERATOR_UI.md`).
 
 ---
 
@@ -36,12 +35,12 @@ in the record says so.
 
 ## The daily loop
 
-| Step | When | CLI | UI (planned) |
+| Step | When | CLI | UI |
 |---|---|---|---|
 | Print the sheet | before open | `model.shadow morning` | Today → Print |
 | Kitchen writes on the paper | during the day | — | — |
 | Key the sheet back in | after close | `model.shadow enter` | Enter |
-| Freeze the day's verdict | after the export lands | `model.shadow score` | Enter → Score |
+| Freeze the day's verdict | after the export lands | `model.shadow score` | Status → Score |
 | Score every day that now has data | any time | `model.shadow catch-up` | Status → Catch up |
 | The district-manager page | weekly | `model.shadow weekly` | Weekly |
 | What is behind | any time | `model.shadow status` | Status |
@@ -130,10 +129,44 @@ Only `morning` creates the shadow directory; every other command refuses a direc
 not there, because a typo in `--out` would otherwise read an empty log and report a pilot that
 lost its record.
 
-### Served operator UI — planned
+### Served operator UI — shipped
 
-`ht/serve.py` plus `web/`. See `docs/specs/SHADOW_OPERATOR_UI.md`. It wraps these same
-functions and adds no arithmetic. The constraints it inherits from this document — no `GET`
-that writes, a second run for a date refused rather than appended, PENDING never rendered as
-a pass, and every CLI refusal reproduced verbatim — are not UI preferences. They are what
-keeps the four properties above true.
+```bash
+npm --prefix web ci && npm --prefix web run build     # once
+python -m ht.serve --panel panel.csv --items ITEMS.json --artifacts artifacts/ \
+    --out shadow --store "Store 0123" --timezone America/Chicago --by kmurphy
+```
+
+`ht/serve.py` plus `web/`. It wraps these same functions and adds no arithmetic: every number
+it shows is a number the CLI would have printed, and its handlers are pure functions of
+(method, path, query, body) with thin `http.server` glue — which is also what makes them
+testable, since `tests/conftest.py` makes binding a socket impossible in this suite.
+
+The constraints it inherits from this document are not UI preferences; they are what keeps the
+four properties above true, and each is enforced on the server rather than in the page:
+
+- **No `GET` writes**, and a second `POST` for a date is refused naming the run it would
+  supersede. A deliberate re-forecast is disclosed by the only evidence the log carries — more
+  than one `run_id` for the date — because `PREDICTION_COLUMNS` has no field for it and the
+  printed sheet no marker.
+- **Score refuses a day with no sales data in the panel.** This is the one guard the CLI does
+  not have and does not need: `score_day` freezes a verdict by file existence, so scoring early
+  writes an all-missing verdict `catch_up` cannot repair, and the day counts against G1 for the
+  rest of the pilot. A person typing a command rarely does it; a button would do it weekly.
+- **Every CLI refusal reproduced in the same words**, including the ones a naive wrapper drops:
+  the "no sheet was logged for this date" warning, and `entered_by`.
+- **PENDING never rendered as a pass**, and the stamps — BACKFILLED, RECONSTRUCTED, the
+  carried-forward calendar, the no-sellout caveat — shown as banners rather than tooltips.
+
+Two things the CLI's design assumes that a server cannot, and says out loud instead:
+
+- **The store's timezone is a required flag.** Nothing here computes "today" — `--date` is
+  required on every subcommand that takes one — and a server clock in a zone ahead of the store
+  would default to tomorrow, which no guard refuses because a future date is never backfilled.
+- **Taking the lock creates the shadow directory**, which undoes the rule that only `morning`
+  does. That rule is what stops a typo in `--out` from reading an empty log and reporting a
+  pilot that lost its record, so the server says so at startup and in every status response
+  rather than letting an empty record pass for an empty week.
+
+It binds `127.0.0.1` and has no authentication: anyone who can reach the port can write to the
+pilot's record. `--allow-remote` is required to bind anything else.

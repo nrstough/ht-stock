@@ -7,8 +7,9 @@
 #
 # There is no network access at test time. tests/conftest.py monkeypatches socket.socket to
 # raise for every test, so an accidental fetch fails the suite rather than passing quietly
-# on a runner that happens to have a route out. pip is the only thing that touches the
-# network here.
+# on a runner that happens to have a route out. That rule is why tests/test_serve.py drives
+# ht.serve's handlers directly instead of binding a port: an API test that opened a socket
+# could not run here at all. pip and npm are the only things that touch the network.
 name: ci
 
 on: [push, pull_request]
@@ -67,3 +68,40 @@ jobs:
       # Inference only: replays the frozen checkpoint into a temp file and diffs the bytes.
       - name: results.json is still reproducible byte for byte
         run: python -m pytest tests/ -q -m slow
+
+  # A separate job on purpose. The python job's steps from "feature build" onward are one
+  # order-dependent chain ending in `git diff --exit-code` over the four frozen files, and
+  # anything that writes into the working tree before that step fails the build. Building the
+  # frontend in the same job would put a dist/ and a possible lockfile churn inside it for no
+  # benefit -- this needs none of the python job's state and runs beside it.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # `npm ci`, never `npm install`: ci installs exactly the committed lockfile and does not
+      # rewrite it, so a dependency cannot drift in on a green build.
+      - name: install
+        working-directory: web
+        run: npm ci
+
+      - name: typecheck and build
+        working-directory: web
+        run: npm run build
+
+      # Includes the cross-language parser vectors: web/src/lib/parseEntries.test.ts and
+      # tests/test_serve.py both assert against tests/fixtures/entry_vectors.json, which is
+      # generated from model.shadow.parse_entries. If the browser's reading of a returned sheet
+      # ever diverges from the server's, one of the two suites goes red.
+      - name: unit tests
+        working-directory: web
+        run: npm test
+
+      - name: the lockfile was not rewritten
+        run: git diff --exit-code -- web/package-lock.json
