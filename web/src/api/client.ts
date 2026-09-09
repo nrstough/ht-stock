@@ -92,11 +92,24 @@ export const api = {
       '/api/enter', { date, lines, by }),
 
   score: (date: string) =>
-    post<{ for_date: string; counts: Record<string, number>; rows: number }>(
-      '/api/score', { date }),
+    post<{
+      for_date: string
+      counts: Record<string, number>
+      rows: number
+      /** items frozen as missing rather than holding the day back -- permanent, so shown */
+      frozen_without_data?: string[]
+      note?: string
+    }>('/api/score', { date }),
 
   catchUp: (since?: string) =>
-    post<{ scored: string[]; unscored: string[] }>('/api/catch-up', { since }),
+    post<{
+      scored: string[]
+      unscored: string[]
+      /** date -> items whose sales data has not landed; the day was left alone */
+      waiting_on_data: Record<string, string[]>
+      /** date -> items frozen as missing because they have not sold recently */
+      frozen_without_data: Record<string, string[]>
+    }>('/api/catch-up', { since }),
 
   makeWeekly: (week_ending: string, opts: { weeks?: number; include_backfilled?: boolean } = {}) =>
     post<WeeklyPayload>('/api/weekly', { week_ending, ...opts }),

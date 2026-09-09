@@ -8,10 +8,13 @@ import { Gates } from '../components/Gates'
  * What is behind, and the two ways to settle a day.
  *
  * Scoring freezes a verdict once, so the server refuses a day whose sales data has not
- * arrived -- scoring it then would freeze an empty verdict that catch-up cannot repair and
- * that counts against completeness for the rest of the pilot. Catch-up is offered first
- * because it does the safe thing by construction: it scores every day that has data and
- * skips the ones that do not.
+ * fully arrived -- scoring it then would record the missing items as missing for the rest of
+ * the pilot, and catch-up cannot repair it. Catch-up is offered first because it applies the
+ * same precondition per day: it scores the days that are complete and leaves the rest alone.
+ *
+ * Both routes can still freeze an item that has not sold in a fortnight, because waiting for
+ * a row that is never coming would block the day forever. That is a permanent decision, so
+ * the item is named in the result rather than left inside a count.
  */
 export function Status({ status, onChange }: {
   status: StatusPayload | null
@@ -72,13 +75,27 @@ export function Status({ status, onChange }: {
           <button className="primary" disabled={busy}
                   onClick={() => run(async () => {
                     const r = await api.catchUp()
-                    return `Scored: ${r.scored.join(', ') || 'nothing new'}. `
-                      + `Still waiting on data: ${r.unscored.join(', ') || 'none'}.`
+                    const held = Object.entries(r.waiting_on_data ?? {})
+                      .map(([d, items]) => `${d} (${items.join(', ')})`)
+                    const froze = Object.entries(r.frozen_without_data ?? {})
+                      .map(([d, items]) => `${d} (${items.join(', ')})`)
+                    return [
+                      `Scored: ${r.scored.join(', ') || 'nothing new'}.`,
+                      held.length
+                        ? `Left alone until their export lands: ${held.join('; ')}.`
+                        : '',
+                      froze.length
+                        ? `Recorded as missing, permanently, because they have not sold `
+                          + `recently: ${froze.join('; ')}.`
+                        : '',
+                    ].filter(Boolean).join(' ')
                   })}>
             {busy ? 'Working…' : 'Catch up'}
           </button>
           <span className="hint">
-            Scores every day that has sales data and skips the ones that do not.
+            Scores every day whose sales data has fully landed, and leaves the rest alone —
+            a day&apos;s verdict is frozen once, so a day that is only partly in the panel is
+            better left until it is complete.
           </span>
         </div>
       </div>
@@ -94,8 +111,11 @@ export function Status({ status, onChange }: {
           <button disabled={busy || !scoreDate}
                   onClick={() => run(async () => {
                     const r = await api.score(scoreDate)
-                    return `${r.for_date}: `
-                      + Object.entries(r.counts).map(([k, v]) => `${k} ${v}`).join(', ')
+                    const counts = Object.entries(r.counts)
+                      .map(([k, v]) => `${k} ${v}`).join(', ')
+                    // frozen rows cannot be re-scored, so the items are named rather than
+                    // left inside a missing_data count nobody expands
+                    return `${r.for_date}: ${counts}.` + (r.note ? ` ${r.note}` : '')
                   })}>
             Score it
           </button>

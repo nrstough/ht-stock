@@ -53,7 +53,9 @@ describe('the order the sheet printed', () => {
     show(order())
     // the sheet lists short-history items with a par and the reason they have no forecast;
     // calling that "model said" hands an untrained number the model's authority
-    expect(await screen.findByText(/your par was 12/)).toBeInTheDocument()
+    const said = await screen.findByText(/your par was 12/)
+    // and asserted one-sidedly it would still pass if the row rendered BOTH labels
+    expect(said.textContent).not.toMatch(/model said/)
   })
 
   it('says "not on the sheet" for an item the sheet did not carry', async () => {

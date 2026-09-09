@@ -299,7 +299,65 @@ rewritten" was false — that commit had edited criteria 18 and 24 inside the fr
 two edits are reverted and the reading is recorded above instead.
 
 Also closed: an unreadable or unreclaimable lock now produces a sentence rather than a
-`ValueError` traceback or an unbounded spin; the missing-sheet test's `assert status in (200,
-409)` — the same `or`-shaped hatch this pipeline had already removed once — is now
-deterministic; and the plan file's two stale references to `--force`, a flag that no longer
-exists, are marked.
+`ValueError` traceback or an unbounded spin, on the acquire path.
+
+
+---
+
+## Addendum 3, 2026-09-09 — third audit
+
+Fail again. The three headline fixes from Addendum 2 held up under re-examination, but two
+round-2 findings were not actually closed, both new mechanisms had a defect of their own, and
+Addendum 2 repeated the failure it was written to apologise for.
+
+**Two findings I reported as fixed and had not fixed.**
+
+- The `assert status in (200, 409)` hatch was still there. A second, deterministic test had
+  been added for the same scenario — with a docstring saying "Deterministic, not `assert
+  status in (200, 409)`" — and the original was left standing beside it. The old test is now
+  deleted.
+- The corrupt-lock fix covered the acquire path only. Releasing a lock whose file had been
+  corrupted or replaced while held still raised `ValueError` or `TypeError` out of the context
+  manager, at shutdown, against this module's own "never a traceback" contract.
+
+**Three defects introduced by the previous round's fixes.**
+
+- `os.link` was a portability regression against the `O_EXCL` it replaced: it fails with
+  EPERM, EXDEV or ENOTSUP on FAT, several CIFS/NFS mounts and some container layers. A store
+  keeping the pilot record on a USB stick could not start the server at all, and got a
+  traceback rather than a sentence. `link` is now attempted first for its atomicity, with
+  `O_EXCL` as the fallback and a reader that tolerates the brief empty window that leaves.
+- A lock released between our failed `link()` and our read of the file — the ordinary
+  stop-old-start-new restart window — was reported as "unreadable … delete that file", naming
+  a file that no longer existed. A disappearing lock now retries.
+- `_unsettled` computed which items were beyond saving and then discarded that list at both
+  call sites, so an item idle longer than the window was frozen as `missing_data` with nothing
+  naming it. Freezing a row is permanent and only the operator can say whether the item has
+  really stopped or its export is behind, so both routes now name it. `RECENT_DAYS` also went
+  from 7 to 14: at 7 a weekly item survived exactly one cycle with no margin, and one skipped
+  week — a holiday, a stockout, a closure — would have reclassified it.
+
+**Corrections to Addendum 2**, which stated two things that were not true: the missing-sheet
+test was not deterministic (see above), and only one of the plan file's two `--force`
+references had been marked. Both are now right.
+
+**On the numbers.** Addendum 2 said "553 → 560 passed". Measured properly this time, in a
+separate worktree at the base commit rather than from memory: **449 at 250b28d, 560 at the
+previous commit, 570 now**, with the same 5 pre-existing `test_integration_guards.py` failures
+throughout. Frontend: 87 tests. `tests/test_serve.py` passes under `-W error`, which the
+previous round claimed of the lock subset only.
+
+Also closed this round: `catch_up` no longer writes `last_scored_date` (the CLI's does not, and
+writing it could move the stored value backwards when an earlier day is filled after a later
+one) and its date selection is now pinned by test to `shadow.catch_up`'s; what catch-up held
+back and what scoring froze reach the operator's screen rather than the JSON alone; a moved
+panel file no longer answers a browser with an `OSError` and an absolute path; the weekly
+listing no longer advertises reports the single-week route would refuse; stale lock temp files
+are cleared; and `@testing-library/user-event` is pinned exactly like every other dependency.
+
+**Still open, recorded rather than closed.** `serve.catch_up` remains a reimplementation rather
+than a delegation, which the module header says this file must never become. The justification
+is specific: `shadow.catch_up` freezes a partly-landed day, which is the defect this whole
+thread of findings is about. It is held to the CLI's behaviour by test on everything except
+that precondition. If `model/shadow.py` ever gains the precondition itself, this should
+collapse back to a call.

@@ -272,8 +272,9 @@ than a whole-parser equivalence that is not well formed.
 power cut leaves it behind, and next morning the server refuses to start — citing a pid that no
 longer exists, in front of an operator the run spec defines as someone who cannot open a shell.
 So `<out>/.serve.lock` holds pid **and** process start time, is checked with `os.kill(pid, 0)`,
-is reclaimed automatically when the holder is gone, names `--force` in its refusal when the
-holder is alive, and is keyed on `os.path.realpath(out)` so `shadow`, `./shadow` and an absolute
+is reclaimed automatically when the holder is gone, refuses outright when the holder is
+alive (superseded: `--force` was removed rather than fixed -- see Addendum 2 of the run spec),
+and is keyed on `os.path.realpath(out)` so `shadow`, `./shadow` and an absolute
 path are one directory. Ordering: the lock lives inside `--out`, which only `morning` creates
 (`:1808`), so startup creates the directory when absent and takes the lock there —
 `_require_out`'s refusal stays a *route*-level guard, unchanged.

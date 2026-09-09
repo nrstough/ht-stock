@@ -67,7 +67,10 @@ def started(api):
 
 def _pred_bytes(api):
     path = os.path.join(api.s.out_dir, "predictions.csv")
-    return open(path, "rb").read() if os.path.exists(path) else b""
+    if not os.path.exists(path):
+        return b""
+    with open(path, "rb") as fh:
+        return fh.read()
 
 
 # ---- no GET writes, and a second run is refused ----
@@ -202,8 +205,10 @@ def test_ht_serve_names_no_simulator_column():
     Pinned here too so the failure names this module rather than arriving as a parametrised
     surprise in a file nobody editing serve.py is looking at.
     """
-    source = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                               "ht", "serve.py"), encoding="utf-8").read()
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "ht", "serve.py")
+    with open(path, encoding="utf-8") as fh:
+        source = fh.read()
     for name in schema.SIM_ONLY:
         assert name not in source
 
@@ -902,18 +907,6 @@ def test_a_partly_landed_export_does_not_freeze_the_items_still_missing(api, tmp
     assert not os.path.exists(os.path.join(api.s.out_dir, "scores", f"{COVERED}.csv"))
 
 
-def test_a_day_whose_only_gap_is_a_missing_sheet_can_still_be_scored(api):
-    """Waiting cannot produce a sheet that was never printed, so it is not "not yet"."""
-    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
-    # a second date with panel data but no sheet of its own
-    status, _ = api.handle("POST", "/api/score", body={"date": "2025-12-29"})
-    assert status in (200, 409)
-    if status == 409:
-        # if it refuses, it must not claim the panel is missing data it actually has
-        _, payload = api.handle("POST", "/api/score", body={"date": "2025-12-29"})
-        assert "no sales data" not in payload["error"]
-
-
 def test_status_reads_under_the_lock_like_every_other_reader(started):
     """status goes through read_predictions too, and it is the route the page polls."""
     errors = []
@@ -971,7 +964,7 @@ def test_a_live_holders_lock_survives_the_refusal(tmp_path):
 
 
 def test_two_simultaneous_starts_cannot_both_take_the_lock(tmp_path):
-    """exists() then open() is not atomic; O_EXCL is."""
+    """The file is linked into place complete, so there is no window that says nothing."""
     out = str(tmp_path / "shadow")
     barrier = threading.Barrier(2)
     held = []
@@ -1185,3 +1178,183 @@ def test_an_unreclaimable_stale_lock_says_so_instead_of_spinning(tmp_path, monke
         with serve.hold_lock(out):
             pass
     assert "by hand" in str(exc.value)
+
+
+# ---- what the third audit found ----
+
+def test_a_lock_released_between_the_link_and_the_read_is_retried_not_refused(tmp_path,
+                                                                             monkeypatch):
+    """The ordinary stop-old-start-new restart window.
+
+    A holder releasing between our failed link() and our read of the file leaves
+    FileNotFoundError, which is not "unreadable" -- refusing there hands the operator an
+    instruction about a file that is not there.
+    """
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    os.makedirs(out)
+    path = os.path.join(out, serve.LOCK_NAME)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"pid": os.getpid(), "start_time": serve._proc_start_time(os.getpid())}, fh)
+
+    real_open = serve.open if hasattr(serve, "open") else open
+    state = {"first": True}
+
+    def vanish(p, *a, **kw):
+        if p == path and state["first"]:
+            state["first"] = False
+            os.remove(path)                      # the holder exits, right now
+            raise FileNotFoundError(2, "No such file or directory", p)
+        return real_open(p, *a, **kw)
+
+    monkeypatch.setattr("builtins.open", vanish)
+    with serve.hold_lock(out):                   # must succeed, not raise
+        pass
+
+
+def test_the_lock_still_works_where_hard_links_do_not(tmp_path, monkeypatch):
+    """os.link fails with EPERM/EXDEV/ENOTSUP on FAT, some CIFS mounts and container layers.
+
+    A store keeping the pilot record on a USB stick must still be able to start the server,
+    and must get a sentence rather than a traceback if it cannot.
+    """
+    def no_links(src, dst):
+        raise OSError(1, "Operation not permitted")
+
+    monkeypatch.setattr(serve.os, "link", no_links)
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    with serve.hold_lock(out):
+        with open(os.path.join(out, serve.LOCK_NAME), encoding="utf-8") as fh:
+            assert json.load(fh)["pid"] == os.getpid()
+    # and the second holder is still refused on that path
+    monkeypatch.setattr(serve.os, "link", no_links)
+    with serve.hold_lock(out):
+        with pytest.raises(schema.HtError):
+            with serve.hold_lock(out):
+                pass
+
+
+def test_releasing_a_corrupted_lock_does_not_raise_on_the_way_out(tmp_path):
+    """The other half of the function the previous round only half fixed."""
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    with serve.hold_lock(out):
+        with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
+            fh.write("{not json at all")
+    # exiting the with-block above must not raise
+
+
+def test_releasing_a_lock_whose_pid_is_not_a_number_does_not_raise(tmp_path):
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    with serve.hold_lock(out):
+        with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
+            json.dump({"pid": ["a", "list"]}, fh)
+
+
+def test_a_stale_temp_file_is_cleared_rather_than_left_in_the_record(tmp_path):
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    os.makedirs(out)
+    litter = os.path.join(out, f"{serve.LOCK_NAME}.999.deadbeef.tmp")
+    open(litter, "w").close()
+    with serve.hold_lock(out):
+        assert not os.path.exists(litter)
+
+
+def test_an_item_frozen_without_data_is_named_not_buried_in_a_count(api, tmp_path,
+                                                                   panel_path):
+    """Freezing a row is permanent, so the operator has to be told which row.
+
+    Only they can say whether the item really has stopped or its export is simply behind.
+    """
+    frame = schema.read_panel(panel_path)
+    mask = (frame["item"].astype(str) == "cake") & (frame["date"] >= "2025-12-05")
+    local = str(tmp_path / "idle.csv")
+    schema.write_panel(frame[~mask], local)
+    api.s.panel_path = local
+
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    status, payload = api.handle("POST", "/api/score", body={"date": COVERED})
+    assert status == 200
+    assert payload["frozen_without_data"] == ["cake"]
+    assert "cake" in payload["note"]
+    assert str(serve.RECENT_DAYS) in payload["note"]
+
+
+def test_catch_up_also_names_what_it_froze(api, tmp_path, panel_path):
+    frame = schema.read_panel(panel_path)
+    mask = (frame["item"].astype(str) == "cake") & (frame["date"] >= "2025-12-05")
+    local = str(tmp_path / "idle2.csv")
+    schema.write_panel(frame[~mask], local)
+    api.s.panel_path = local
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    _, payload = api.handle("POST", "/api/catch-up", body={})
+    assert payload["frozen_without_data"].get(COVERED) == ["cake"]
+
+
+def test_an_item_idle_within_the_window_still_holds_the_day_back(api, tmp_path, panel_path):
+    """The boundary the window exists for: a slow mover is a gap, not a stopped item."""
+    frame = schema.read_panel(panel_path)
+    day = pd.Timestamp(COVERED)
+    mask = (frame["item"].astype(str) == "cake") & \
+           (frame["date"] > day - pd.Timedelta(days=serve.RECENT_DAYS - 1)) & \
+           (frame["date"] <= day)
+    local = str(tmp_path / "slow.csv")
+    schema.write_panel(frame[~mask], local)
+    api.s.panel_path = local
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    status, payload = api.handle("POST", "/api/score", body={"date": COVERED})
+    assert status == 409, payload
+    assert "cake" in payload["error"]
+
+
+def test_catch_up_picks_the_same_days_the_cli_would(api):
+    """serve.catch_up is a reimplementation, so its date selection is pinned to the CLI's.
+
+    The module's contract is that it wraps the daily loop and never redefines it. This route
+    is the one exception -- shadow.catch_up freezes a partly-landed day, which is the whole
+    reason it is not called -- so the part that is NOT about the precondition is held to
+    shadow.catch_up's behaviour by test.
+    """
+    for day in pd.date_range("2025-12-24", "2025-12-28"):
+        api.handle("POST", "/api/morning",
+                   body={"date": str(day.date()), "backfill": True})
+    _, served = api.handle("POST", "/api/catch-up", body={})
+
+    fresh = serve.Api(serve.Settings(panel=api.s.panel_path, items=api.s.items_path,
+                                     artifacts=ARTIFACTS, out=api.s.out_dir + "-cli",
+                                     timezone="UTC"))
+    for day in pd.date_range("2025-12-24", "2025-12-28"):
+        fresh.handle("POST", "/api/morning",
+                     body={"date": str(day.date()), "backfill": True})
+    by_cli = shadow.catch_up(fresh._panel(), fresh._items(), fresh.s.out_dir)
+    assert served["scored"] == by_cli
+
+
+def test_catch_up_does_not_write_last_scored_date(api):
+    """The CLI's catch-up writes no state, and writing it here can move it backwards."""
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    api.handle("POST", "/api/score", body={"date": COVERED})
+    _, before = api.handle("GET", "/api/status")
+    api.handle("POST", "/api/morning", body={"date": "2025-12-29", "backfill": True})
+    api.handle("POST", "/api/catch-up", body={})
+    with open(os.path.join(api.s.out_dir, "state.json"), encoding="utf-8") as fh:
+        state = json.load(fh)
+    assert state["last_scored_date"] == before["last_scored_date"]
+
+
+def test_a_panel_that_moved_is_a_sentence_not_an_oserror(started, tmp_path):
+    """A path from an unexpected exception is noise; a path the operator typed is not.
+
+    `--out: no shadow directory at <path>` is the CLI's own sentence and that path IS the
+    answer -- it is the flag value to correct. What must not reach a browser is the raw OSError
+    a moved file produces, which names an absolute path nobody typed alongside an errno.
+    """
+    started.s.panel_path = str(tmp_path / "moved-away.csv")
+    for method, path, kw in (("GET", "/api/config", {}),
+                             ("POST", "/api/score", {"body": {"date": COVERED}}),
+                             ("POST", "/api/morning", {"body": {"date": "2025-12-28"}})):
+        status, payload = started.handle(method, path, **kw)
+        assert status >= 400, (path, payload)
+        assert "Errno" not in payload["error"], (path, payload)
+        assert "Traceback" not in payload["error"], (path, payload)
+        assert str(tmp_path) not in payload["error"], (path, payload)
+        assert "--panel" in payload["error"], (path, payload)
+        assert "moved-away.csv" in payload["error"], (path, payload)
