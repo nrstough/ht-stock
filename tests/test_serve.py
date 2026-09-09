@@ -636,54 +636,6 @@ def test_concurrent_posts_for_one_date_log_exactly_one_run(api):
 
 # ---- the lock file ----
 
-def test_a_second_server_on_one_directory_is_refused(tmp_path):
-    out = str(tmp_path / "shadow")
-    with serve.hold_lock(out):
-        with pytest.raises(schema.HtError) as exc:
-            with serve.hold_lock(out):
-                pass
-    assert "already serving" in str(exc.value)
-    # no flag overrides a live holder; the escape hatch for a recycled pid is named instead
-    assert serve.LOCK_NAME in str(exc.value)
-
-
-def test_a_lock_left_by_a_dead_process_is_reclaimed(tmp_path):
-    """A power cut must not lock the operator out of tomorrow morning."""
-    out = str(tmp_path / "shadow")
-    os.makedirs(out)
-    with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
-        json.dump({"pid": 999999, "start_time": "1"}, fh)
-    with serve.hold_lock(out):
-        with open(os.path.join(out, serve.LOCK_NAME), encoding="utf-8") as fh:
-            assert json.load(fh)["pid"] == os.getpid()
-
-
-def test_a_live_holder_is_never_overridden(tmp_path):
-    """There is no flag for it: two servers on one append-only record is the hazard."""
-    out = str(tmp_path / "shadow")
-    with serve.hold_lock(out):
-        with pytest.raises(schema.HtError) as exc:
-            with serve.hold_lock(out):
-                pass
-    assert "Stop that process first" in str(exc.value)
-    assert serve.LOCK_NAME in str(exc.value)
-
-
-def test_the_lock_is_keyed_on_the_real_path(tmp_path):
-    out = str(tmp_path / "shadow")
-    os.makedirs(out)
-    with serve.hold_lock(out):
-        with pytest.raises(schema.HtError):
-            with serve.hold_lock(os.path.join(str(tmp_path), ".", "shadow")):
-                pass
-
-
-def test_the_lock_is_released_on_the_way_out(tmp_path):
-    out = str(tmp_path / "shadow")
-    with serve.hold_lock(out):
-        pass
-    assert not os.path.exists(os.path.join(out, serve.LOCK_NAME))
-
 
 # ---- the process boundary ----
 
@@ -953,41 +905,6 @@ def test_concurrent_writes_across_dates_keep_every_row(api):
                   for d in logged["for_date"].unique()) == sorted(dates)
 
 
-def test_a_live_holders_lock_survives_the_refusal(tmp_path):
-    """The refused caller must not remove the lock it failed to take."""
-    out = str(tmp_path / "shadow")
-    with serve.hold_lock(out):
-        with pytest.raises(schema.HtError):
-            with serve.hold_lock(out):
-                pass
-        assert os.path.exists(os.path.join(os.path.realpath(out), serve.LOCK_NAME))
-
-
-def test_two_simultaneous_starts_cannot_both_take_the_lock(tmp_path):
-    """The file is linked into place complete, so there is no window that says nothing."""
-    out = str(tmp_path / "shadow")
-    barrier = threading.Barrier(2)
-    held = []
-
-    def take():
-        barrier.wait()
-        try:
-            with serve.hold_lock(out):
-                held.append(1)
-                pd.Timestamp.now()          # hold it briefly
-                import time as _t
-                _t.sleep(0.2)
-        except schema.HtError:
-            pass
-
-    threads = [threading.Thread(target=take) for _ in range(2)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert len(held) == 1
-
-
 def test_a_writer_is_not_starved_by_a_stream_of_readers(started):
     """The 5:30am sheet must not be refused because the page keeps polling."""
     stop = threading.Event()
@@ -1138,124 +1055,7 @@ def test_a_day_with_no_sheet_but_full_data_scores(api):
     assert payload["counts"] == {"missing_sheet": len(api._items())}
 
 
-def test_a_half_written_lock_is_never_mistaken_for_a_dead_one(tmp_path):
-    """The race the first fix left open.
-
-    O_EXCL creates an empty file and the payload is a second write, so a racer could read
-    nothing, parse no pid out of it, conclude the owner was dead and delete a LIVE lock. The
-    file is now linked into place complete or not at all.
-    """
-    out = os.path.realpath(str(tmp_path / "shadow"))
-    os.makedirs(out)
-    open(os.path.join(out, serve.LOCK_NAME), "w").close()          # empty: mid-write
-    with pytest.raises(schema.HtError) as exc:
-        with serve.hold_lock(out):
-            pass
-    assert "unreadable" in str(exc.value)
-
-
-def test_a_corrupt_lock_is_a_sentence_not_a_traceback(tmp_path):
-    out = os.path.realpath(str(tmp_path / "shadow"))
-    os.makedirs(out)
-    with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
-        fh.write('{"pid": "not-a-number"}')
-    with pytest.raises(schema.HtError):          # not ValueError, not a traceback
-        with serve.hold_lock(out):
-            pass
-
-
-def test_an_unreclaimable_stale_lock_says_so_instead_of_spinning(tmp_path, monkeypatch):
-    out = os.path.realpath(str(tmp_path / "shadow"))
-    os.makedirs(out)
-    with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
-        json.dump({"pid": 999999, "start_time": "1"}, fh)
-
-    def refuse(path):
-        raise PermissionError(1, "Operation not permitted")
-
-    monkeypatch.setattr(serve.os, "remove", refuse)
-    with pytest.raises(schema.HtError) as exc:
-        with serve.hold_lock(out):
-            pass
-    assert "by hand" in str(exc.value)
-
-
 # ---- what the third audit found ----
-
-def test_a_lock_released_between_the_link_and_the_read_is_retried_not_refused(tmp_path,
-                                                                             monkeypatch):
-    """The ordinary stop-old-start-new restart window.
-
-    A holder releasing between our failed link() and our read of the file leaves
-    FileNotFoundError, which is not "unreadable" -- refusing there hands the operator an
-    instruction about a file that is not there.
-    """
-    out = os.path.realpath(str(tmp_path / "shadow"))
-    os.makedirs(out)
-    path = os.path.join(out, serve.LOCK_NAME)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump({"pid": os.getpid(), "start_time": serve._proc_start_time(os.getpid())}, fh)
-
-    real_open = serve.open if hasattr(serve, "open") else open
-    state = {"first": True}
-
-    def vanish(p, *a, **kw):
-        if p == path and state["first"]:
-            state["first"] = False
-            os.remove(path)                      # the holder exits, right now
-            raise FileNotFoundError(2, "No such file or directory", p)
-        return real_open(p, *a, **kw)
-
-    monkeypatch.setattr("builtins.open", vanish)
-    with serve.hold_lock(out):                   # must succeed, not raise
-        pass
-
-
-def test_the_lock_still_works_where_hard_links_do_not(tmp_path, monkeypatch):
-    """os.link fails with EPERM/EXDEV/ENOTSUP on FAT, some CIFS mounts and container layers.
-
-    A store keeping the pilot record on a USB stick must still be able to start the server,
-    and must get a sentence rather than a traceback if it cannot.
-    """
-    def no_links(src, dst):
-        raise OSError(1, "Operation not permitted")
-
-    monkeypatch.setattr(serve.os, "link", no_links)
-    out = os.path.realpath(str(tmp_path / "shadow"))
-    with serve.hold_lock(out):
-        with open(os.path.join(out, serve.LOCK_NAME), encoding="utf-8") as fh:
-            assert json.load(fh)["pid"] == os.getpid()
-    # and the second holder is still refused on that path
-    monkeypatch.setattr(serve.os, "link", no_links)
-    with serve.hold_lock(out):
-        with pytest.raises(schema.HtError):
-            with serve.hold_lock(out):
-                pass
-
-
-def test_releasing_a_corrupted_lock_does_not_raise_on_the_way_out(tmp_path):
-    """The other half of the function the previous round only half fixed."""
-    out = os.path.realpath(str(tmp_path / "shadow"))
-    with serve.hold_lock(out):
-        with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
-            fh.write("{not json at all")
-    # exiting the with-block above must not raise
-
-
-def test_releasing_a_lock_whose_pid_is_not_a_number_does_not_raise(tmp_path):
-    out = os.path.realpath(str(tmp_path / "shadow"))
-    with serve.hold_lock(out):
-        with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
-            json.dump({"pid": ["a", "list"]}, fh)
-
-
-def test_a_stale_temp_file_is_cleared_rather_than_left_in_the_record(tmp_path):
-    out = os.path.realpath(str(tmp_path / "shadow"))
-    os.makedirs(out)
-    litter = os.path.join(out, f"{serve.LOCK_NAME}.999.deadbeef.tmp")
-    open(litter, "w").close()
-    with serve.hold_lock(out):
-        assert not os.path.exists(litter)
 
 
 def test_an_item_frozen_without_data_is_named_not_buried_in_a_count(api, tmp_path,
@@ -1358,3 +1158,184 @@ def test_a_panel_that_moved_is_a_sentence_not_an_oserror(started, tmp_path):
         assert str(tmp_path) not in payload["error"], (path, payload)
         assert "--panel" in payload["error"], (path, payload)
         assert "moved-away.csv" in payload["error"], (path, payload)
+
+
+# ---- one server per shadow directory ----
+#
+# Three earlier versions of this lock were wrong in three different ways, all sharing a root
+# cause: they tried to decide whether the previous holder was still alive by reading a pid out
+# of a file. That cannot be done without a race, and the race was measured -- two starters
+# against a stale lock both removed it and both claimed, roughly one start in five, in exactly
+# the case the reclaim existed for. flock does not ask the question, so these tests are about
+# the property rather than about the bookkeeping.
+
+def _child(out, seconds="0.4"):
+    """A real process that takes the lock and holds it. Threads share an fd table; flock is
+    per-process, so only separate processes exercise what a second `python -m ht.serve` does."""
+    import subprocess
+    import sys as _sys
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    code = (
+        "import sys, time\n"
+        f"sys.path.insert(0, {repo!r})\n"
+        "from ht import serve, schema\n"
+        "try:\n"
+        f"    with serve.hold_lock({out!r}):\n"
+        "        print('HELD', flush=True)\n"
+        f"        time.sleep({seconds})\n"
+        "except schema.HtError as exc:\n"
+        "    print('REFUSED', exc, flush=True)\n")
+    return subprocess.Popen([_sys.executable, "-c", code],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def test_a_second_server_on_one_directory_is_refused(tmp_path):
+    out = str(tmp_path / "shadow")
+    with serve.hold_lock(out):
+        with pytest.raises(schema.HtError) as exc:
+            with serve.hold_lock(out):
+                pass
+    assert "already serving" in str(exc.value)
+    # and it says why deleting the file will not help, because with flock it will not
+    assert "will not help" in str(exc.value)
+
+
+def test_the_lock_is_keyed_on_the_real_path(tmp_path):
+    out = str(tmp_path / "shadow")
+    os.makedirs(out)
+    with serve.hold_lock(out):
+        with pytest.raises(schema.HtError):
+            with serve.hold_lock(os.path.join(str(tmp_path), ".", "shadow"))  :
+                pass
+
+
+def test_the_lock_is_released_when_the_holder_exits(tmp_path):
+    out = str(tmp_path / "shadow")
+    with serve.hold_lock(out):
+        pass
+    with serve.hold_lock(out):          # immediately re-takeable
+        pass
+
+
+def test_a_lock_left_behind_by_a_dead_process_does_not_block_the_morning(tmp_path):
+    """The power-cut case, which the previous three implementations all got wrong.
+
+    A killed process leaves the FILE behind. With flock the kernel has already dropped the
+    lock, so there is nothing to reclaim and no pid to second-guess.
+    """
+    out = str(tmp_path / "shadow")
+    child = _child(out, seconds="30")
+    try:
+        assert child.stdout.readline().strip() == "HELD"
+        child.kill()
+        child.wait(timeout=10)
+    finally:
+        child.stdout.close(); child.stderr.close()
+    assert os.path.exists(os.path.join(os.path.realpath(out), serve.LOCK_NAME))
+    with serve.hold_lock(out):          # must simply work
+        pass
+
+
+def test_two_real_processes_racing_a_stale_lock_cannot_both_hold_it(tmp_path):
+    """The blocking defect the fourth audit found, at the branch it lived in.
+
+    The old test raced two starts against an EMPTY directory, so the reclaim branch never ran
+    and the race never appeared. This one leaves a stale lock file first, which is the whole
+    scenario: a power cut, a reboot, then cron and the operator both starting the server.
+    """
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    os.makedirs(out)
+    with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
+        json.dump({"pid": 999999, "since": "2026-01-01T05:30:00-06:00"}, fh)
+
+    for _ in range(12):
+        kids = [_child(out) for _ in range(2)]
+        try:
+            lines = [k.stdout.readline().strip() for k in kids]
+            for k in kids:
+                k.wait(timeout=20)
+        finally:
+            for k in kids:
+                k.stdout.close(); k.stderr.close()
+        assert sum(1 for ln in lines if ln == "HELD") == 1, lines
+        assert sum(1 for ln in lines if ln.startswith("REFUSED")) == 1, lines
+
+
+def test_a_corrupt_lock_file_does_not_stop_the_server_starting(tmp_path):
+    """Its contents are a note for a person, not the lock. Unreadable is not a refusal."""
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    os.makedirs(out)
+    with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
+        fh.write("{not json at all")
+    with serve.hold_lock(out):
+        with open(os.path.join(out, serve.LOCK_NAME), encoding="utf-8") as fh:
+            assert json.load(fh)["pid"] == os.getpid()
+
+
+def test_a_corrupt_lock_still_names_the_holder_as_best_it_can(tmp_path):
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    os.makedirs(out)
+    with serve.hold_lock(out):
+        with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
+            fh.write("{}")
+        with pytest.raises(schema.HtError) as exc:
+            with serve.hold_lock(out):
+                pass
+    assert "could not be read" in str(exc.value)
+
+
+def test_releasing_a_lock_whose_file_was_corrupted_does_not_raise(tmp_path):
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    with serve.hold_lock(out):
+        with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
+            json.dump({"pid": ["a", "list"]}, fh)
+    # exiting must not raise
+
+
+def test_the_lock_leaves_no_temporary_files_in_the_pilot_record(tmp_path):
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    with serve.hold_lock(out):
+        pass
+    assert [f for f in os.listdir(out)] == [serve.LOCK_NAME]
+
+
+def test_the_frozen_note_agrees_with_itself_on_number(api, tmp_path, panel_path):
+    """Two items froze; "cake, sushi ... that item is still selling" reads as machine text."""
+    frame = schema.read_panel(panel_path)
+    mask = (frame["item"].astype(str).isin(["cake", "sushi"])) & (frame["date"] >= "2025-12-05")
+    local = str(tmp_path / "two-idle.csv")
+    schema.write_panel(frame[~mask], local)
+    api.s.panel_path = local
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    _, payload = api.handle("POST", "/api/score", body={"date": COVERED})
+    note = payload["note"]
+    assert sorted(payload["frozen_without_data"]) == ["cake", "sushi"]
+    assert "have no sales data" in note and "they were recorded" in note
+    assert "that item is" not in note
+
+
+def test_the_frozen_note_is_singular_for_one_item(api, tmp_path, panel_path):
+    frame = schema.read_panel(panel_path)
+    mask = (frame["item"].astype(str) == "cake") & (frame["date"] >= "2025-12-05")
+    local = str(tmp_path / "one-idle.csv")
+    schema.write_panel(frame[~mask], local)
+    api.s.panel_path = local
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    _, payload = api.handle("POST", "/api/score", body={"date": COVERED})
+    assert "has no sales data" in payload["note"]
+    assert "that item is still selling" in payload["note"]
+
+
+def test_the_weekly_listing_hides_a_file_the_single_week_route_would_refuse(a_scored_week):
+    """Advertising a name that then 404s sends the page after a report it cannot fetch."""
+    a_scored_week.handle("POST", "/api/weekly", body={"week_ending": "2025-12-31"})
+    root = os.path.join(a_scored_week.s.out_dir, "weekly")
+    with open(os.path.join(root, "notes.json"), "w", encoding="utf-8") as fh:
+        fh.write("{}")
+    with open(os.path.join(root, "2026-W99-draft.json"), "w", encoding="utf-8") as fh:
+        fh.write("{}")
+    _, payload = a_scored_week.handle("GET", "/api/weekly")
+    assert payload["weeks"] == ["2025-W53"] or all(
+        w not in ("notes", "2026-W99-draft") for w in payload["weeks"])
+    for week in payload["weeks"]:
+        assert a_scored_week.handle("GET", "/api/weekly", query={"week": week})[0] == 200

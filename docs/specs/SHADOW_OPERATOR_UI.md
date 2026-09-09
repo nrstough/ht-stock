@@ -361,3 +361,46 @@ is specific: `shadow.catch_up` freezes a partly-landed day, which is the defect 
 thread of findings is about. It is held to the CLI's behaviour by test on everything except
 that precondition. If `model/shadow.py` ever gains the precondition itself, this should
 collapse back to a call.
+
+---
+
+## Addendum 4, 2026-09-09 — fourth audit
+
+Thirteen of sixteen third-round findings genuinely fixed, none regressed — and **one blocking
+new defect**, in the mechanism the previous three rounds had each rewritten.
+
+**The lock was the wrong primitive, three times over.** Every version tried to work out
+whether the previous holder was still alive by reading a pid out of a file. That question
+cannot be answered without a race, and the audit measured the consequence: two starters racing
+a *stale* lock both read the corpse's pid, both removed the file, and both claimed — **57
+times in 300**, across genuine separate processes, in exactly the scenario the reclaim existed
+for. A power cut leaves a lock behind, the box reboots, cron and the operator both start the
+server, and two of them append to one append-only record. The suite never saw it because its
+race test started from an *empty* directory, so the reclaim branch was never executed.
+
+`fcntl.flock` does not ask the question. The lock lives on an open file descriptor; the kernel
+releases it when the holder exits for any reason, including a kill or a power loss. There is
+nothing to reclaim, no staleness to detect, no pid to trust, no temp file, no empty window and
+no retry budget — and with it go four findings that were all symptoms of the old scheme: the
+`os.link` portability regression, the "unreadable — delete that file" advice that would have
+had an operator delete a live server's lock on a slow filesystem, the startup sweep that could
+break a concurrent claim, and the bounded-retry corner. The pid inside the file is now only a
+note for a person reading it.
+
+Verified with two real servers: the second is refused and told that deleting the file will not
+help, because the lock is held on an open descriptor rather than by the file existing; and a
+lock left behind by `kill -9` does not block the next start. The replacement race test uses
+real processes against a stale lock — 84 races, all clean.
+
+Also closed this round: the frozen-items note disagreed with itself on number ("cake, sushi …
+that item is still selling") and said "has not sold" where the code measures "has no row in
+the panel"; the weekly listing filter gained the test it lacked; and two comments that had
+gone stale in the opposite direction are corrected.
+
+**Recorded, not closed.** `score()` still writes `last_scored_date`, which moves backwards
+when an earlier day is scored after a later one. It stays because `_cmd_score` does exactly
+the same thing and parity with the CLI is this module's contract, and because nothing reads
+the stored value — `status()` derives that date from the score files. `catch_up` does *not*
+write it, because the CLI's catch-up does not either. The previous commit message implied that
+asymmetry was a fix rather than a deliberate difference; it is the latter, and it is now
+commented where it happens.

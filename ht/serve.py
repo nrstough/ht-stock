@@ -32,7 +32,6 @@ exercised by calling Api.handle directly.
 import argparse
 import contextlib
 import datetime as dt
-import errno
 import http.server
 import json
 import math
@@ -44,8 +43,12 @@ import socketserver
 import sys
 import threading
 import time
+
+try:
+    import fcntl
+except ImportError:      # pragma: no cover - POSIX only
+    fcntl = None
 import urllib.parse
-import uuid
 import zoneinfo
 
 import numpy as np
@@ -63,9 +66,6 @@ DEFAULT_PORT = 8765
 LOOPBACK = "127.0.0.1"
 MAX_BODY_BYTES = 1 << 20
 LOCK_NAME = ".serve.lock"
-# Bounded so a directory that cannot be written produces a sentence rather than a silent spin
-# at 5:30am. Each attempt is a claim plus at most one reclaim of a dead owner's lock.
-RECLAIM_ATTEMPTS = 8
 
 # How far back to look for an item's last sale when deciding whether a missing row is a gap
 # the export can still fill or an item that has stopped. Seven days is exactly one cycle, so a
@@ -98,11 +98,6 @@ class ServeError(schema.HtError):
 
 
 # ---- JSON, without lying about what is missing ----
-
-def serve_recent_days():
-    """RECENT_DAYS, as a function so a message cannot drift from the constant it quotes."""
-    return RECENT_DAYS
-
 
 def json_safe(obj):
     """Whatever pandas and numpy hand back, as something json.dumps accepts.
@@ -204,162 +199,78 @@ class RWLock:
 
 # ---- the lock file ----
 
-def _proc_start_time(pid):
-    """The process's start time from /proc, so a recycled pid is not mistaken for the holder."""
-    try:
-        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
-            return fh.read().rsplit(")", 1)[1].split()[19]
-    except (OSError, IndexError):
-        return ""
+def _lock_note(fd):
+    """What is written inside the lock file: for a human reading it, not for the locking."""
+    os.ftruncate(fd, 0)
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.write(fd, json.dumps({
+        "pid": os.getpid(),
+        "since": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }).encode("utf-8"))
 
 
-def _alive(pid, start_time):
-    if pid <= 0:
-        return False
+def _held_by(path):
+    """The pid recorded in a lock file, for the refusal message only. 0 when unreadable."""
     try:
-        os.kill(pid, 0)
-    except OSError as exc:
-        if exc.errno == errno.ESRCH:
-            return False
-        if exc.errno != errno.EPERM:
-            return False
-    now = _proc_start_time(pid)
-    return not (now and start_time and now != start_time)
+        with open(path, encoding="utf-8") as fh:
+            return int(json.load(fh).get("pid") or 0)
+    except (OSError, ValueError, TypeError):
+        return 0
 
 
 @contextlib.contextmanager
 def hold_lock(out_dir):
-    """Refuse a second server on one shadow directory -- but never because of a corpse.
+    """One server per shadow directory, enforced by the kernel rather than by inspection.
 
-    A pid file alone is a trap: a kill, an out-of-memory death or a power cut leaves it
-    behind, and the next morning the server refuses to start over a pid that no longer
-    exists, in front of the person least able to do anything about it. So the holder's
-    liveness is checked, a dead holder's lock is reclaimed silently, and a live one is named
-    along with the flag that overrides it.
+    Three earlier attempts at this got it wrong in three different ways, and all three shared
+    a root cause: they tried to work out whether the *previous* holder was still alive, from
+    a pid written in a file. That question cannot be answered without a race. Checking a pid
+    and then removing the file is a time-of-check/time-of-use gap wide enough that two
+    starters racing a stale lock both removed it and both claimed -- measured at roughly one
+    start in five, in exactly the situation the reclaim existed for: a power cut leaves a
+    lock behind, the box reboots, and cron and the operator both start the server.
+
+    flock does not ask the question. The lock lives on an open file descriptor, the kernel
+    releases it when the holder exits for ANY reason -- clean shutdown, kill, power loss --
+    and a second attempt either gets it or does not. There is nothing to reclaim, no
+    staleness to detect, no pid to trust, and no window in which the file says nothing. The
+    pid inside the file is only there so a person can see who holds it.
 
     Yields True when it had to CREATE the directory. Taking a lock means creating it, which
     quietly undoes the CLI's rule that only `morning` does -- and that rule is what stops a
     typo in --out from reading an empty log and reporting a pilot that lost its record. The
-    server cannot refuse instead (it needs the lock before it serves anything), so it says
-    so at startup and on every status response rather than letting an empty record pass for
-    an empty week.
+    server cannot refuse instead (it needs the lock before it serves anything), so it says so
+    at startup and on every status response rather than letting an empty record pass for an
+    empty week.
     """
+    if fcntl is None:                      # pragma: no cover - POSIX only in practice
+        raise ServeError(
+            "this platform has no flock, so ht.serve cannot guarantee that only one server "
+            "writes to a shadow directory. Run it on Linux or macOS.")
     root = os.path.realpath(out_dir)
     fresh = not os.path.isdir(root)
     os.makedirs(root, exist_ok=True)
     path = os.path.join(root, LOCK_NAME)
-    payload = json.dumps({
-        "pid": os.getpid(), "start_time": _proc_start_time(os.getpid()),
-        "since": dt.datetime.now().astimezone().isoformat(timespec="seconds")})
 
-    def _claim():
-        """Publish a COMPLETE lock file, atomically, or raise FileExistsError.
-
-        O_EXCL alone is not enough on its own: it creates an empty file and the payload is a
-        second write, so a racing starter can read nothing out of it, parse no pid, decide
-        the owner is dead and delete a live lock. Writing the content first and link()ing it
-        into place closes that window -- link is atomic and fails if the name is taken.
-
-        link is not universally available, though: it fails with EPERM, EXDEV or ENOTSUP on
-        FAT, some CIFS/NFS mounts and some container layers, and a store keeping the pilot
-        record on a USB stick must still be able to start the server. So O_EXCL is the
-        fallback, and the reader below tolerates the brief empty window it can leave.
-        """
-        tmp = os.path.join(root, f"{LOCK_NAME}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
-        try:
-            with open(tmp, "w", encoding="utf-8") as fh:
-                fh.write(payload)
-            try:
-                os.link(tmp, path)
-                return
-            except FileExistsError:
-                raise
-            except OSError:
-                pass                       # no hard links here; fall through to O_EXCL
-        finally:
-            with contextlib.suppress(OSError):
-                os.remove(tmp)
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(payload)
-
-    def _read_holder():
-        """(pid, start_time) or None when the file has gone; raises when it is unreadable."""
-        try:
-            with open(path, encoding="utf-8") as fh:
-                held = json.load(fh)
-            return int(held.get("pid") or 0), str(held.get("start_time", ""))
-        except FileNotFoundError:
-            return None                    # the holder released between link and open
-        except (OSError, ValueError, TypeError):
-            raise
-
-    # Left behind only if a process died mid-claim; they are never read, and clearing them
-    # keeps the pilot record free of litter nobody can interpret.
-    for name in os.listdir(root):
-        if name.startswith(LOCK_NAME + ".") and name.endswith(".tmp"):
-            with contextlib.suppress(OSError):
-                os.remove(os.path.join(root, name))
-
-    unreadable_seen = 0
-    for attempt in range(RECLAIM_ATTEMPTS):
-        try:
-            _claim()
-            break
-        except FileExistsError:
-            try:
-                holder = _read_holder()
-            except (OSError, ValueError, TypeError):
-                # An unreadable lock is either a corpse's or the O_EXCL fallback's momentary
-                # empty file. Retry a couple of times before deciding, and assume LIVE if it
-                # stays that way: guessing the other way is what let a running server have
-                # its directory taken out from under it.
-                unreadable_seen += 1
-                if unreadable_seen < 3:
-                    time.sleep(0.05)
-                    continue
-                raise ServeError(
-                    f"{os.path.join(root, LOCK_NAME)} is unreadable, so this cannot tell "
-                    f"whether another ht.serve is running. Check for one, then delete that "
-                    f"file if there is none.") from None
-            if holder is None:
-                continue                   # it was released; go straight round again
-            pid, start_time = holder
-            if _alive(pid, start_time):
-                # There is no flag for this on purpose. Overriding a LIVE holder would leave
-                # two servers appending to one append-only record, which is the whole thing
-                # the lock exists to prevent -- and no operator pressed for time can weigh
-                # that. If pid is not in fact an ht.serve (a recycled pid), the escape hatch
-                # is deleting the file, which is a deliberate act rather than a flag.
-                raise ServeError(
-                    f"another ht.serve (pid {pid}) is already serving {root}. Stop that "
-                    f"process first. If pid {pid} is not an ht.serve, delete "
-                    f"{os.path.join(root, LOCK_NAME)} and start again.")
-            # A dead holder's lock is reclaimed with no flag and no fuss: a kill, an
-            # out-of-memory death or a power cut must not be what stops tomorrow's sheet
-            # being printed, in front of the person least able to diagnose it.
-            try:
-                os.remove(path)
-            except FileNotFoundError:
-                pass                       # somebody else reclaimed it first
-            except OSError as exc:
-                raise ServeError(
-                    f"cannot reclaim the stale lock at {os.path.join(root, LOCK_NAME)} "
-                    f"({exc.strerror}); remove it by hand and start again.") from None
-    else:
-        raise ServeError(
-            f"could not take the lock on {root} after {RECLAIM_ATTEMPTS} attempts; another "
-            f"process is starting and stopping repeatedly. Stop it, then start again.")
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
     try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            held = _held_by(path)
+            who = f"(pid {held})" if held else "(its pid could not be read)"
+            raise ServeError(
+                f"another ht.serve {who} is already serving {root}. Stop that process "
+                f"first -- deleting {path} will not help, because the lock is held on an "
+                f"open file rather than by that file existing.") from None
+        _lock_note(fd)
         yield fresh
     finally:
-        # A lock file corrupted or replaced while held must not raise on the way out: the
-        # server is shutting down, and a traceback there is the contract this module says it
-        # does not have.
-        with contextlib.suppress(OSError, ValueError, TypeError):
-            with open(path, encoding="utf-8") as fh:
-                if int(json.load(fh).get("pid") or 0) == os.getpid():
-                    os.remove(path)
+        # closing the descriptor releases the flock; the file is left in place because its
+        # existence is not what locks, and removing it would race a starter that has already
+        # opened it
+        with contextlib.suppress(OSError):
+            os.close(fd)
 
 
 # ---- settings ----
@@ -517,10 +428,12 @@ class Api:
             # the export for this date has not arrived at all -- everything is still coming
             return fresh, sorted(waiting), []
         # It HAS arrived, so an item missing from it is either a partial ingest or an item
-        # that has stopped. Recent history separates them: one selling the day before and
-        # absent today is a gap the store can still fill; one absent for a week is
+        # that has stopped. Recent history separates them: one with rows the day before and
+        # none today is a gap the store can still fill; one with no row for a fortnight is
         # discontinued, or was added to the items file ahead of the export, and no amount of
         # waiting produces a row. Refusing on the second kind would refuse the day forever.
+        # Note this measures rows in the panel, not units sold: an item present every day
+        # with nothing sold is still one the export is covering.
         recent = df[(df["date"] < for_date)
                     & (df["date"] >= for_date - pd.Timedelta(days=RECENT_DAYS))]
         alive = set(recent["item"].astype(str))
@@ -797,6 +710,10 @@ class Api:
                         f"Ingest the day's export, then score it -- or use catch-up, which "
                         f"scores the days that are complete and leaves this one alone.", 409)
             rows = shadow.score_day(panel, items, self.s.out_dir, for_date)
+            # Same write _cmd_score makes, kept for parity even though scoring an earlier day
+            # after a later one moves the stored value backwards. Nothing reads it: status()
+            # derives last_scored_date from the score files themselves. catch-up does NOT
+            # write it, because the CLI's catch-up does not either.
             shadow._write_state(self.s.out_dir, last_scored_date=str(for_date.date()))
         counts = rows["status"].astype(str).value_counts().to_dict()
         out = {"for_date": for_date, "counts": counts, "rows": int(len(rows))}
@@ -805,11 +722,15 @@ class Api:
             # and the operator is the only one who can say whether the item really has
             # stopped or the export is simply behind
             out["frozen_without_data"] = gone
+            one = len(gone) == 1
             out["note"] = (
-                f"{', '.join(gone)} had no sales data and has not sold in the last "
-                f"{serve_recent_days()} days, so it was recorded as missing rather than "
-                f"holding the day back. If that item is still selling, its export is behind "
-                f"and this day's verdict for it cannot be changed.")
+                f"{', '.join(gone)} {'has' if one else 'have'} no sales data for this day and "
+                f"{'has' if one else 'have'} no row in the panel at all for the last "
+                f"{RECENT_DAYS} days, so {'it was' if one else 'they were'} recorded as "
+                f"missing rather than holding the day back. If "
+                f"{'that item is' if one else 'those items are'} still selling, the export is "
+                f"behind and this day's verdict for "
+                f"{'it' if one else 'them'} cannot be changed.")
         return 200, json_safe(out)
 
     def catch_up(self, body):
