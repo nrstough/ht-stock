@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 .rehearsal/
+node_modules/
+web/dist/
+web/coverage/
+/shadow/
