@@ -1,0 +1,155 @@
+/* The palette is lifted verbatim from index.html:8-32 -- both blocks, because the dark set
+   is not optional decoration: the Phase-1 logger already ships it and a store using both
+   pages should not find one of them ignoring the phone's theme.
+
+   Three tokens are added here that the logger has no use for: a verdict scale for the
+   go/no-go gates. PASS and FAIL reuse the existing accent and danger hues; PENDING is
+   deliberately its own neutral rather than a paler green, because a gate nobody has
+   measured yet must not read as one that passed. */
+:root {
+  --bg: #f4f5f2;
+  --card: #ffffff;
+  --text: #1c2420;
+  --muted: #5f6b64;
+  --accent: #1e7a46;
+  --accent-soft: #e3f1e9;
+  --border: #d8ded9;
+  --danger: #b3372e;
+  --danger-soft: #f9e9e7;
+
+  --warn: #8a6100;
+  --warn-soft: #fbf0d9;
+  --pending: #5f6b64;
+  --pending-soft: #eceeeb;
+
+  /* Two chart series: what the model said, and what the store's own par sheet said.
+     Validated with the dataviz skill's checker against THIS app's surfaces (#ffffff light,
+     #1d231f dark) -- lightness band, chroma floor, CVD separation, normal-vision floor and
+     contrast all pass, worst-case adjacent deltaE 17.3 light / 15.1 dark. Do not hand-tune
+     these: re-run the validator. */
+  --series-model: #1e7a46;
+  --series-par: #9a4bc4;
+
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141815;
+    --card: #1d231f;
+    --text: #e8ece9;
+    --muted: #9aa69e;
+    --accent: #4cb87a;
+    --accent-soft: #21332a;
+    --border: #313a34;
+    --danger: #e0685f;
+    --danger-soft: #3a2523;
+
+    --warn: #d7a53c;
+    --warn-soft: #33291494;
+    --pending: #9aa69e;
+    --pending-soft: #262c28;
+
+    /* Not the light values flipped, and not --accent reused: the app's dark accent
+       (#4cb87a, OKLCH L 0.704) sits above the 0.48-0.67 band a dark chart surface needs,
+       so the chart takes its own steps. */
+    --series-model: #3aa76a;
+    --series-par: #a06fd6;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding-bottom: 84px;          /* room for the bottom nav, as in index.html */
+}
+h1, h2, h3 { line-height: 1.25; }
+a { color: var(--accent); }
+
+.wrap { max-width: 860px; margin: 0 auto; padding: 0 12px; }
+
+header.app {
+  padding: 14px 16px 10px;
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+}
+header.app h1 { font-size: 20px; margin: 0; }
+header.app .sub { color: var(--muted); font-size: 13px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.card h2 { font-size: 15px; margin: 0 0 10px; }
+.hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+
+button {
+  font: inherit;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+input, select {
+  font: inherit; padding: 9px 10px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--card); color: var(--text);
+}
+input:disabled { opacity: .6; }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase;
+     letter-spacing: .03em; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll-x { overflow-x: auto; }
+
+/* Banners. A stamp the record carries is never a tooltip: if a sheet was made after the
+   day it is for, or replaced an earlier one, the person reading it sees that first. */
+.banner {
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 12px;
+  border: 1px solid var(--border); background: var(--card); font-size: 14px;
+}
+.banner strong { display: block; margin-bottom: 2px; }
+.banner.warn { background: var(--warn-soft); border-color: var(--warn); color: var(--text); }
+.banner.danger { background: var(--danger-soft); border-color: var(--danger); }
+.banner.info { background: var(--accent-soft); border-color: var(--accent); }
+
+.verdict {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; letter-spacing: .04em;
+}
+.verdict.pass { background: var(--accent-soft); color: var(--accent); }
+.verdict.fail { background: var(--danger-soft); color: var(--danger); }
+.verdict.pending { background: var(--pending-soft); color: var(--pending); }
+
+nav.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  display: flex; background: var(--card); border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+nav.tabs a {
+  flex: 1; text-align: center; padding: 12px 4px; font-size: 13px;
+  color: var(--muted); text-decoration: none;
+}
+nav.tabs a.active { color: var(--accent); font-weight: 600; }
+
+.offline { padding: 40px 16px; text-align: center; color: var(--muted); }
+
+/* The sheet is meant to be printed and written on. Everything that is not the sheet goes
+   away, and the paper carries the same columns the terminal's .txt does. */
+@media print {
+  nav.tabs, .no-print, button { display: none !important; }
+  body { padding: 0; background: #fff; color: #000; }
+  .card { border: none; padding: 0; }
+  .banner { border: 1px solid #000; }
+  table { font-size: 12px; }
+  th, td { border-bottom: 1px solid #999; }
+}

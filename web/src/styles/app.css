@@ -1,0 +1,44 @@
+/* Layout that only the operator app needs. Tokens live in tokens.css. */
+
+.gates { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.gates li {
+  display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px;
+}
+.gate-id { font-weight: 700; color: var(--muted); font-size: 13px; }
+.gate-title { font-size: 14px; }
+
+.chart figcaption { display: block; margin-bottom: 6px; }
+.chart-title { display: block; font-size: 15px; font-weight: 600; }
+.chart-sub { display: block; font-size: 13px; color: var(--muted); }
+.chart { margin: 0; }
+.legend { display: flex; gap: 14px; font-size: 13px; color: var(--muted); margin: 4px 0 8px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+            margin-right: 5px; vertical-align: middle; }
+.visually-detailed { margin-top: 10px; }
+
+.row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 12px; color: var(--muted); text-transform: uppercase;
+               letter-spacing: .03em; font-weight: 600; }
+
+.entry-grid { display: grid; gap: 8px; }
+.entry-row {
+  display: grid; grid-template-columns: 1fr 90px 120px; gap: 8px; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.entry-row .name { font-size: 14px; }
+.entry-row .said { display: block; font-size: 12px; color: var(--muted); }
+.entry-row.bad input { border-color: var(--danger); }
+.entry-error { grid-column: 1 / -1; color: var(--danger); font-size: 13px; }
+
+.sheet-row.fallback td { background: var(--warn-soft); }
+.why { color: var(--muted); font-size: 13px; }
+
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 14px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 520px) {
+  .entry-row { grid-template-columns: 1fr 80px 100px; }
+}

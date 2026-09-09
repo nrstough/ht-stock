@@ -758,3 +758,39 @@ def test_a_real_record_is_not_flagged_as_new(settings):
     api.handle("POST", "/api/morning", body={"date": TOMORROW})
     _, payload = api.handle("GET", "/api/status")
     assert payload["new_shadow_dir"] is False
+
+
+# ---- the vector file the browser is held to ----
+
+def test_the_shared_entry_vectors_still_describe_the_parser(items):
+    """The browser parses the returned sheet too, and two parsers drift.
+
+    tests/fixtures/entry_vectors.json is generated from parse_entries and asserted against by
+    web/src/lib/parseEntries.test.ts. If parse_entries changes and the fixture is not
+    regenerated, this fails here rather than in a browser six weeks into a pilot.
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "tests", "fixtures", "entry_vectors.json"),
+              encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["items"].keys() == items.keys(), "regenerate: the items config moved"
+    for case in doc["cases"]:
+        # a case may carry its own catalogue: no shipped item name is longer than the
+        # sheet's 18-character ITEM column, so truncation needs one to be exercised at all
+        catalogue = case.get("items", items)
+        rows, errors = shadow.parse_entries(case["lines"], catalogue)
+        assert rows == case["rows"], case["label"]
+        assert errors == case["errors"], case["label"]
+
+
+def test_the_vectors_cover_both_outcomes():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "tests", "fixtures", "entry_vectors.json"),
+              encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert len(doc["cases"]) >= 20
+    assert any(c["errors"] for c in doc["cases"])
+    assert any(c["rows"] for c in doc["cases"])
+    # the guard that decides whether a returned sheet is read or lost over a column width
+    assert any("items" in c for c in doc["cases"]), "no case exercises truncation"
+    assert any("truncate alike" in c["label"] for c in doc["cases"])

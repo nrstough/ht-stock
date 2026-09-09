@@ -1,0 +1,529 @@
+{
+ "_comment": "Generated from model.shadow.parse_entries -- the authority. Both tests/test_serve.py and web/src/lib/parseEntries.test.ts read this file, so the browser's parser and the server's cannot drift apart without a test failing. Regenerate with scripts/make_entry_vectors.py.",
+ "items": {
+  "bread": {
+   "name": "Bread Loaf"
+  },
+  "cake": {
+   "name": "Cake"
+  },
+  "doughnut": {
+   "name": "Doughnut"
+  },
+  "hotbar-lb": {
+   "name": "Hot Bar (per lb)"
+  },
+  "pizza-slice": {
+   "name": "Pizza Slice"
+  },
+  "pizza-whole": {
+   "name": "Whole Pizza"
+  },
+  "rotisserie": {
+   "name": "Rotisserie Chicken"
+  },
+  "sub": {
+   "name": "Sub / Sandwich"
+  },
+  "sushi": {
+   "name": "Sushi Roll"
+  }
+ },
+ "cases": [
+  {
+   "label": "a plain row",
+   "lines": [
+    "bread,20,14:30"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "14:30",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "no time written",
+   "lines": [
+    "bread,20,"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "zero is a negative not midnight",
+   "lines": [
+    "bread,20,0"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "written negatives",
+   "lines": [
+    "bread,20,no",
+    "cake,3,none",
+    "sushi,1,n/a"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "",
+     "note": ""
+    },
+    {
+     "item": "cake",
+     "actual_produced": 3.0,
+     "sold_out_at": "",
+     "note": ""
+    },
+    {
+     "item": "sushi",
+     "actual_produced": 1.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "bare affirmative",
+   "lines": [
+    "bread,20,yes",
+    "cake,3,circled"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "yes",
+     "note": ""
+    },
+    {
+     "item": "cake",
+     "actual_produced": 3.0,
+     "sold_out_at": "yes",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "12 hour clock",
+   "lines": [
+    "bread,20,2:30pm",
+    "cake,3,2pm",
+    "sushi,1,11:15am"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "14:30",
+     "note": ""
+    },
+    {
+     "item": "cake",
+     "actual_produced": 3.0,
+     "sold_out_at": "14:00",
+     "note": ""
+    },
+    {
+     "item": "sushi",
+     "actual_produced": 1.0,
+     "sold_out_at": "11:15",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "military without a colon",
+   "lines": [
+    "bread,20,1430"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "14:30",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "dots and spaces are ignored",
+   "lines": [
+    "bread,20,2.30 pm"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "14:30",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "a decimal quantity for a weighed item",
+   "lines": [
+    "hotbar-lb,12.5,"
+   ],
+   "rows": [
+    {
+     "item": "hotbar-lb",
+     "actual_produced": 12.5,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "blank and comment lines are skipped",
+   "lines": [
+    "",
+    "# yesterday",
+    "bread,20,"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "a pasted header row is skipped",
+   "lines": [
+    "item,made,sold out at",
+    "bread,20,"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "a note with its own comma",
+   "lines": [
+    "bread,20,14:30,ran out, no more flour"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "14:30",
+     "note": "ran out, no more flour"
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "the printed name instead of the key",
+   "lines": [
+    "Bread Loaf,20,"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "a name the sheet did not truncate is still just a name",
+   "lines": [
+    "Rotisserie Chicken,8,"
+   ],
+   "rows": [
+    {
+     "item": "rotisserie",
+     "actual_produced": 8.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "a half-typed name is a near miss, not a truncation",
+   "lines": [
+    "Rotisserie Chicke,8,"
+   ],
+   "rows": [],
+   "errors": [
+    "line 1: 'Rotisserie Chicke' is not an item in the items config -- did you mean rotisserie?"
+   ]
+  },
+  {
+   "label": "the name as the 18-character ITEM column printed it",
+   "lines": [
+    "Rotisserie Chicken,8,"
+   ],
+   "rows": [],
+   "errors": [
+    "line 1: 'Rotisserie Chicken' is not an item in the items config -- did you mean rotisserie-lp?"
+   ],
+   "items": {
+    "rotisserie-lp": {
+     "name": "Rotisserie Chicken Lemon Pepper"
+    },
+    "rotisserie-bbq": {
+     "name": "Rotisserie Chicken Barbecue"
+    },
+    "cake-sheet": {
+     "name": "Sheet Cake Half Vanilla"
+    },
+    "bread": {
+     "name": "Bread Loaf"
+    }
+   }
+  },
+  {
+   "label": "two names that truncate alike are refused rather than misfiled",
+   "lines": [
+    "Rotisserie Chicken,8,"
+   ],
+   "rows": [],
+   "errors": [
+    "line 1: 'Rotisserie Chicken' is not an item in the items config -- did you mean rotisserie-lp?"
+   ],
+   "items": {
+    "rotisserie-lp": {
+     "name": "Rotisserie Chicken Lemon Pepper"
+    },
+    "rotisserie-bbq": {
+     "name": "Rotisserie Chicken Barbecue"
+    },
+    "cake-sheet": {
+     "name": "Sheet Cake Half Vanilla"
+    },
+    "bread": {
+     "name": "Bread Loaf"
+    }
+   }
+  },
+  {
+   "label": "an unambiguous truncation is accepted",
+   "lines": [
+    "Sheet Cake Half Va,2,"
+   ],
+   "rows": [
+    {
+     "item": "cake-sheet",
+     "actual_produced": 2.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": [],
+   "items": {
+    "rotisserie-lp": {
+     "name": "Rotisserie Chicken Lemon Pepper"
+    },
+    "rotisserie-bbq": {
+     "name": "Rotisserie Chicken Barbecue"
+    },
+    "cake-sheet": {
+     "name": "Sheet Cake Half Vanilla"
+    },
+    "bread": {
+     "name": "Bread Loaf"
+    }
+   }
+  },
+  {
+   "label": "the full long name is accepted too",
+   "lines": [
+    "Sheet Cake Half Vanilla,2,"
+   ],
+   "rows": [
+    {
+     "item": "cake-sheet",
+     "actual_produced": 2.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": [],
+   "items": {
+    "rotisserie-lp": {
+     "name": "Rotisserie Chicken Lemon Pepper"
+    },
+    "rotisserie-bbq": {
+     "name": "Rotisserie Chicken Barbecue"
+    },
+    "cake-sheet": {
+     "name": "Sheet Cake Half Vanilla"
+    },
+    "bread": {
+     "name": "Bread Loaf"
+    }
+   }
+  },
+  {
+   "label": "case does not matter",
+   "lines": [
+    "BREAD,20,"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": []
+  },
+  {
+   "label": "an unknown item",
+   "lines": [
+    "kombucha,3,"
+   ],
+   "rows": [],
+   "errors": [
+    "line 1: 'kombucha' is not an item in the items config"
+   ]
+  },
+  {
+   "label": "a near miss gets a hint",
+   "lines": [
+    "Bread L,3,"
+   ],
+   "rows": [],
+   "errors": [
+    "line 1: 'Bread L' is not an item in the items config -- did you mean bread?"
+   ]
+  },
+  {
+   "label": "the same item twice",
+   "lines": [
+    "bread,20,",
+    "bread,21,"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": [
+    "line 2: bread was already entered on an earlier line"
+   ]
+  },
+  {
+   "label": "made is not a number",
+   "lines": [
+    "bread,banana,"
+   ],
+   "rows": [],
+   "errors": [
+    "line 1: made 'banana' is not a quantity"
+   ]
+  },
+  {
+   "label": "made is negative",
+   "lines": [
+    "bread,-5,"
+   ],
+   "rows": [],
+   "errors": [
+    "line 1: made '-5' is not a quantity"
+   ]
+  },
+  {
+   "label": "an unreadable time",
+   "lines": [
+    "bread,20,half past two"
+   ],
+   "rows": [],
+   "errors": [
+    "line 1: sold out at 'half past two' is not a time -- write it as 14:30, 2:30pm or 1430, or 'yes' if it sold out and nobody wrote the time, or leave it blank (or 'no') if it did not sell out"
+   ]
+  },
+  {
+   "label": "an impossible minute",
+   "lines": [
+    "bread,20,14:75"
+   ],
+   "rows": [],
+   "errors": [
+    "line 1: sold out at '14:75' is not a time -- write it as 14:30, 2:30pm or 1430, or 'yes' if it sold out and nobody wrote the time, or leave it blank (or 'no') if it did not sell out"
+   ]
+  },
+  {
+   "label": "an impossible 12 hour value",
+   "lines": [
+    "bread,20,14:30pm"
+   ],
+   "rows": [],
+   "errors": [
+    "line 1: sold out at '14:30pm' is not a time -- write it as 14:30, 2:30pm or 1430, or 'yes' if it sold out and nobody wrote the time, or leave it blank (or 'no') if it did not sell out"
+   ]
+  },
+  {
+   "label": "an impossible 24 hour value",
+   "lines": [
+    "bread,20,25:00"
+   ],
+   "rows": [],
+   "errors": [
+    "line 1: sold out at '25:00' is not a time -- write it as 14:30, 2:30pm or 1430, or 'yes' if it sold out and nobody wrote the time, or leave it blank (or 'no') if it did not sell out"
+   ]
+  },
+  {
+   "label": "one bad line poisons the whole sheet",
+   "lines": [
+    "bread,20,",
+    "cake,banana,"
+   ],
+   "rows": [
+    {
+     "item": "bread",
+     "actual_produced": 20.0,
+     "sold_out_at": "",
+     "note": ""
+    }
+   ],
+   "errors": [
+    "line 2: made 'banana' is not a quantity"
+   ]
+  }
+ ]
+}
