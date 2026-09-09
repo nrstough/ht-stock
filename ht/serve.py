@@ -45,6 +45,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import uuid
 import zoneinfo
 
 import numpy as np
@@ -62,6 +63,14 @@ DEFAULT_PORT = 8765
 LOOPBACK = "127.0.0.1"
 MAX_BODY_BYTES = 1 << 20
 LOCK_NAME = ".serve.lock"
+# Bounded so a directory that cannot be written produces a sentence rather than a silent spin
+# at 5:30am. Each attempt is a claim plus at most one reclaim of a dead owner's lock.
+RECLAIM_ATTEMPTS = 5
+
+# How far back to look for an item's last sale when deciding whether a missing row is a gap
+# the export can still fill or an item that has stopped. A week covers every day of the week
+# once, so a genuinely weekly item is not mistaken for a discontinued one.
+RECENT_DAYS = 7
 WRITE_TIMEOUT_S = 20.0
 
 # The one status that says "the store's export has not landed for this item-day yet", and the
@@ -233,16 +242,31 @@ def hold_lock(out_dir):
     fresh = not os.path.isdir(root)
     os.makedirs(root, exist_ok=True)
     path = os.path.join(root, LOCK_NAME)
-    mine = json.dumps({"pid": os.getpid(), "start_time": _proc_start_time(os.getpid()),
-                       "since": dt.datetime.now().astimezone().isoformat(timespec="seconds")})
+    payload = json.dumps({
+        "pid": os.getpid(), "start_time": _proc_start_time(os.getpid()),
+        "since": dt.datetime.now().astimezone().isoformat(timespec="seconds")})
 
     def _claim():
-        """Create the lock or fail; O_EXCL so two simultaneous starts cannot both win."""
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(mine)
+        """Publish a COMPLETE lock file, atomically, or fail.
 
-    while True:
+        O_EXCL alone is not enough: it creates an empty file and the payload is a second
+        write, so a racing starter can read the empty file, fail to parse a pid out of it,
+        conclude the owner is dead and delete a live lock. Writing the content into a temp
+        file first and then link()ing it into place means the lock never exists in a state
+        that says nothing -- link is atomic and fails if the name is taken.
+        """
+        # unique per attempt, not per process: two threads of ONE process race here in the
+        # tests, and a shared name means one of them removes the file the other is linking
+        tmp = os.path.join(root, f"{LOCK_NAME}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        try:
+            os.link(tmp, path)
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+
+    for _ in range(RECLAIM_ATTEMPTS):
         try:
             _claim()
             break
@@ -250,9 +274,15 @@ def hold_lock(out_dir):
             try:
                 with open(path, encoding="utf-8") as fh:
                     held = json.load(fh)
-            except (OSError, ValueError):
-                held = {}
-            pid = int(held.get("pid") or 0)
+                pid = int(held.get("pid") or 0)
+            except (OSError, ValueError, TypeError):
+                # A lock we cannot read is assumed LIVE. Guessing the other way is what let
+                # a half-written file get a running server's directory taken out from under
+                # it, and refusing is recoverable in a way that double-writing is not.
+                raise ServeError(
+                    f"{os.path.join(root, LOCK_NAME)} is unreadable, so this cannot tell "
+                    f"whether another ht.serve is running. Check for one, then delete that "
+                    f"file if there is none.") from None
             if _alive(pid, str(held.get("start_time", ""))):
                 # There is no flag for this on purpose. Overriding a LIVE holder would leave
                 # two servers appending to one append-only record, which is the whole thing
@@ -266,8 +296,17 @@ def hold_lock(out_dir):
             # A dead holder's lock is reclaimed with no flag and no fuss: a kill, an
             # out-of-memory death or a power cut must not be what stops tomorrow's sheet
             # being printed, in front of the person least able to diagnose it.
-            with contextlib.suppress(OSError):
+            try:
                 os.remove(path)
+            except OSError as exc:
+                # bounded, and it says which file and why rather than spinning silently
+                raise ServeError(
+                    f"cannot reclaim the stale lock at {os.path.join(root, LOCK_NAME)} "
+                    f"({exc.strerror}); remove it by hand and start again.") from None
+    else:
+        raise ServeError(
+            f"could not take the lock on {root} after {RECLAIM_ATTEMPTS} attempts; another "
+            f"process is starting and stopping repeatedly. Stop it, then start again.")
     try:
         yield fresh
     finally:
@@ -324,6 +363,10 @@ class Api:
         self.lock = RWLock()
         self._panel_cache = (None, None)
         self._items_cache = (None, None)
+        # the caches are written under the READ lock too (several readers hold it at once),
+        # so they get their own mutex rather than relying on which bytecodes happen to be
+        # atomic in one interpreter
+        self._cache_lock = threading.Lock()
 
     # -- cached inputs, refreshed when the file underneath them moves --
 
@@ -331,6 +374,17 @@ class Api:
     def _stamp(path):
         st = os.stat(path)
         return (st.st_mtime_ns, st.st_size)
+
+    def _cached(self, attr, path, build):
+        stamp = self._stamp(path)
+        with self._cache_lock:
+            held_stamp, value = getattr(self, attr)
+            if held_stamp == stamp:
+                return value
+        value = build(path)                       # built outside the mutex: it reads a file
+        with self._cache_lock:
+            setattr(self, attr, (stamp, value))
+        return value
 
     def _panel(self):
         """The canonical panel, re-read when a fresh ingest replaces it.
@@ -340,16 +394,10 @@ class Api:
         here. shadow._panel's assert_no_truth is a belt-and-braces check on an
         already-clean frame rather than the refusal it looks like.
         """
-        stamp = self._stamp(self.s.panel_path)
-        if self._panel_cache[0] != stamp:
-            self._panel_cache = (stamp, shadow._panel(self.s.panel_path))
-        return self._panel_cache[1]
+        return self._cached("_panel_cache", self.s.panel_path, shadow._panel)
 
     def _items(self):
-        stamp = self._stamp(self.s.items_path)
-        if self._items_cache[0] != stamp:
-            self._items_cache = (stamp, ht_config.load_items(self.s.items_path))
-        return self._items_cache[1]
+        return self._cached("_items_cache", self.s.items_path, ht_config.load_items)
 
     def _items_hash(self):
         # recomputed per logging request: a config edited while the server runs would
@@ -386,6 +434,42 @@ class Api:
         """from/to as dates or not at all -- pandas' parse errors are not sentences."""
         return tuple(self._date(query[k], k) if query.get(k) else None
                      for k in ("from", "to"))
+
+    def _unsettled(self, panel, items, for_date):
+        """Items whose sales data has not landed for a day the export otherwise covers.
+
+        score_day freezes the whole file at once, so any row still waiting would be recorded
+        as missing for the rest of the pilot. Two cases are deliberately NOT "waiting":
+
+        a day the panel does not cover at all -- that is "the export has not arrived", which
+        the caller reports differently; and an item with no rows anywhere near the date, which
+        is a discontinued item or one added to the items file ahead of the export. Those never
+        become scoreable, and treating them as waiting would refuse the day forever with no
+        way out. Their absence is reported and frozen rather than blocking the other eight.
+        """
+        fresh = shadow._score_rows(panel, items, self.s.out_dir, for_date)
+        if not len(fresh):
+            return fresh, [], []
+        waiting = set(fresh.loc[fresh["status"].astype(str).isin(UNSETTLED),
+                                "item"].astype(str))
+        if not waiting:
+            return fresh, [], []
+        df = panel.copy()
+        df["date"] = pd.to_datetime(df["date"])
+        if not len(df[df["date"] == for_date]):
+            # the export for this date has not arrived at all -- everything is still coming
+            return fresh, sorted(waiting), []
+        # It HAS arrived, so an item missing from it is either a partial ingest or an item
+        # that has stopped. Recent history separates them: one selling the day before and
+        # absent today is a gap the store can still fill; one absent for a week is
+        # discontinued, or was added to the items file ahead of the export, and no amount of
+        # waiting produces a row. Refusing on the second kind would refuse the day forever.
+        recent = df[(df["date"] < for_date)
+                    & (df["date"] >= for_date - pd.Timedelta(days=RECENT_DAYS))]
+        alive = set(recent["item"].astype(str))
+        pending = sorted(k for k in waiting if k in alive)
+        gone = sorted(k for k in waiting if k not in alive)
+        return fresh, pending, gone
 
     def _runs_for(self, for_date):
         """Every logged run for a date, oldest first -- before keep="last" collapses them.
@@ -639,26 +723,21 @@ class Api:
         items = self._items()
         with self.lock.write():
             path = os.path.join(self.s.out_dir, "scores", f"{for_date.date()}.csv")
-            fresh = shadow._score_rows(panel, items, self.s.out_dir, for_date)
             if not os.path.exists(path):
-                # ANY row still waiting on the export is enough to refuse, not just all of
-                # them: score_day freezes the whole file at once, so a day where eight items
-                # have landed and one has not would freeze that one as missing_data for good.
-                waiting = sorted(fresh.loc[fresh["status"].astype(str).isin(UNSETTLED),
-                                           "item"].astype(str)) if len(fresh) else []
+                fresh, pending, gone = self._unsettled(panel, items, for_date)
                 if not len(fresh):
                     raise ServeError(
                         f"{for_date.date()} has nothing to score: no sheet was logged for it "
                         f"and the panel carries no rows for it.", 409)
-                if waiting:
+                if pending:
                     raise ServeError(
                         f"{for_date.date()} is not fully in the panel yet -- "
-                        f"{len(waiting)} item(s) have no sales data ({', '.join(waiting[:4])}"
-                        f"{', …' if len(waiting) > 4 else ''}). A day's verdict is frozen once "
-                        f"and cannot be re-scored, so scoring now would record those items as "
-                        f"missing for the rest of the pilot. Ingest the day's export first, or "
-                        f"use catch-up, which scores every day that is complete and skips the "
-                        f"ones that are not.", 409)
+                        f"{len(pending)} item(s) have no sales data "
+                        f"({', '.join(pending[:4])}{', …' if len(pending) > 4 else ''}). A "
+                        f"day's verdict is frozen once and cannot be re-scored, so scoring now "
+                        f"would record those items as missing for the rest of the pilot. "
+                        f"Ingest the day's export, then score it -- or use catch-up, which "
+                        f"scores the days that are complete and leaves this one alone.", 409)
             rows = shadow.score_day(panel, items, self.s.out_dir, for_date)
             shadow._write_state(self.s.out_dir, last_scored_date=str(for_date.date()))
         counts = rows["status"].astype(str).value_counts().to_dict()
@@ -672,9 +751,33 @@ class Api:
         panel = self._panel()
         items = self._items()
         with self.lock.write():
-            done = shadow.catch_up(panel, items, self.s.out_dir, since=since)
+            # shadow.catch_up skips a date only when the panel has NO rows for it, so on its
+            # own it would freeze exactly the partly-landed day POST /api/score refuses -- and
+            # the refusal names this route as the safe one. Days with a pending item are held
+            # back here so that sentence is true.
+            logged = shadow.read_predictions(self.s.out_dir)
+            dates = sorted(pd.Timestamp(d) for d in logged["for_date"].unique()) \
+                if len(logged) else []
+            if since:
+                dates = [d for d in dates if d >= since]
+            done, held = [], {}
+            for day in dates:
+                if os.path.exists(os.path.join(self.s.out_dir, "scores",
+                                               f"{day.date()}.csv")):
+                    continue
+                fresh, pending, _ = self._unsettled(panel, items, day)
+                if not len(fresh):
+                    continue
+                if pending:
+                    held[str(day.date())] = pending
+                    continue
+                shadow.score_day(panel, items, self.s.out_dir, day)
+                done.append(str(day.date()))
+            if done:
+                shadow._write_state(self.s.out_dir, last_scored_date=done[-1])
             st = shadow.status(self.s.out_dir)
-        return 200, json_safe({"scored": done, "unscored": st["unscored_dates"]})
+        return 200, json_safe({"scored": done, "unscored": st["unscored_dates"],
+                               "waiting_on_data": held})
 
     def weekly_post(self, body):
         """The district-manager page. A POST because the CLI's weekly writes files."""

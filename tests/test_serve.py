@@ -1071,3 +1071,117 @@ def test_json_safe_renders_a_type_it_does_not_know_rather_than_passing_it_on(sta
         json.dumps(serve.json_safe(odd))
     assert serve.json_safe(float("inf")) is None
     assert serve.json_safe(10 ** 30) == 10 ** 30
+
+
+# ---- what the SECOND audit found ----
+
+def _panel_without(panel_path, tmp_path, item, since=None, on=None):
+    """A panel with one item's rows removed, either from a date onward or on one day."""
+    frame = schema.read_panel(panel_path)
+    mask = frame["item"].astype(str) == item
+    if since is not None:
+        mask &= frame["date"] >= pd.Timestamp(since)
+    if on is not None:
+        mask &= frame["date"] == pd.Timestamp(on)
+    local = str(tmp_path / f"panel-no-{item}.csv")
+    schema.write_panel(frame[~mask], local)
+    return local
+
+
+def test_catch_up_holds_back_the_day_score_refuses(api, tmp_path, panel_path):
+    """The refusal names catch-up as the safe route, so catch-up must not freeze it.
+
+    shadow.catch_up skips a date only when the panel has NO rows for it. On its own it would
+    freeze exactly the partly-landed day POST /api/score refuses -- through the button the
+    refusal recommends.
+    """
+    api.s.panel_path = _panel_without(panel_path, tmp_path, "cake", on=COVERED)
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+
+    status, refusal = api.handle("POST", "/api/score", body={"date": COVERED})
+    assert status == 409 and "cake" in refusal["error"]
+
+    status, payload = api.handle("POST", "/api/catch-up", body={})
+    assert status == 200
+    assert COVERED not in payload["scored"]
+    assert payload["waiting_on_data"].get(COVERED) == ["cake"]
+    assert not os.path.exists(os.path.join(api.s.out_dir, "scores", f"{COVERED}.csv")), \
+        "catch-up must not freeze what score refused"
+
+
+def test_an_item_the_panel_will_never_carry_does_not_block_the_day_forever(api, tmp_path,
+                                                                          panel_path):
+    """The new guard's own failure mode: a permanent refusal with no way out.
+
+    An item discontinued mid-pilot, or added to the items file before the export carries it,
+    has no panel row and never will -- while forecast() keeps logging a prediction for it.
+    Treating that as "not landed yet" refuses the day on every attempt, forever.
+    """
+    api.s.panel_path = _panel_without(panel_path, tmp_path, "cake", since="2025-01-01")
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    status, payload = api.handle("POST", "/api/score", body={"date": COVERED})
+    assert status == 200, payload
+    assert payload["counts"].get("missing_data") == 1, "and it is recorded, not hidden"
+
+
+def test_catch_up_scores_a_day_whose_only_gap_is_an_item_that_is_gone(api, tmp_path,
+                                                                     panel_path):
+    api.s.panel_path = _panel_without(panel_path, tmp_path, "cake", since="2025-01-01")
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    _, payload = api.handle("POST", "/api/catch-up", body={})
+    assert COVERED in payload["scored"]
+    assert not payload["waiting_on_data"]
+
+
+def test_a_day_with_no_sheet_but_full_data_scores(api):
+    """Deterministic, not `assert status in (200, 409)`.
+
+    missing_sheet is permanent by construction -- no waiting produces a sheet nobody printed
+    -- so such a day is as complete as it will ever be.
+    """
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    status, payload = api.handle("POST", "/api/score", body={"date": "2025-12-29"})
+    assert status == 200, payload
+    assert payload["counts"] == {"missing_sheet": len(api._items())}
+
+
+def test_a_half_written_lock_is_never_mistaken_for_a_dead_one(tmp_path):
+    """The race the first fix left open.
+
+    O_EXCL creates an empty file and the payload is a second write, so a racer could read
+    nothing, parse no pid out of it, conclude the owner was dead and delete a LIVE lock. The
+    file is now linked into place complete or not at all.
+    """
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    os.makedirs(out)
+    open(os.path.join(out, serve.LOCK_NAME), "w").close()          # empty: mid-write
+    with pytest.raises(schema.HtError) as exc:
+        with serve.hold_lock(out):
+            pass
+    assert "unreadable" in str(exc.value)
+
+
+def test_a_corrupt_lock_is_a_sentence_not_a_traceback(tmp_path):
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    os.makedirs(out)
+    with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
+        fh.write('{"pid": "not-a-number"}')
+    with pytest.raises(schema.HtError):          # not ValueError, not a traceback
+        with serve.hold_lock(out):
+            pass
+
+
+def test_an_unreclaimable_stale_lock_says_so_instead_of_spinning(tmp_path, monkeypatch):
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    os.makedirs(out)
+    with open(os.path.join(out, serve.LOCK_NAME), "w", encoding="utf-8") as fh:
+        json.dump({"pid": 999999, "start_time": "1"}, fh)
+
+    def refuse(path):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(serve.os, "remove", refuse)
+    with pytest.raises(schema.HtError) as exc:
+        with serve.hold_lock(out):
+            pass
+    assert "by hand" in str(exc.value)
