@@ -1339,3 +1339,81 @@ def test_the_weekly_listing_hides_a_file_the_single_week_route_would_refuse(a_sc
         w not in ("notes", "2026-W99-draft") for w in payload["weeks"])
     for week in payload["weeks"]:
         assert a_scored_week.handle("GET", "/api/weekly", query={"week": week})[0] == 200
+
+
+def test_deleting_the_lock_file_does_not_admit_a_second_server(tmp_path):
+    """The refusal says deleting it will not help, so that has to be true.
+
+    flock lives on an inode and a path is only a name for one, so locking the FILE left the
+    obvious hole: delete the name and the next starter's O_CREAT mints a fresh inode carrying
+    no lock. Not hypothetical -- the file is deliberately left behind after a clean shutdown,
+    so a stray .serve.lock is the normal state of a pilot record and tidying it up is exactly
+    what somebody reaches for. The lock is on the directory instead.
+    """
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    with serve.hold_lock(out):
+        os.remove(os.path.join(out, serve.LOCK_NAME))
+        with pytest.raises(schema.HtError) as exc:
+            with serve.hold_lock(out):
+                pass
+    assert "already serving" in str(exc.value)
+
+
+def test_two_real_processes_cannot_both_hold_it_after_the_note_is_deleted(tmp_path):
+    """Same property, across processes -- threads share a file descriptor table."""
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    holder = _child(out, seconds="6")
+    try:
+        assert holder.stdout.readline().strip() == "HELD"
+        os.remove(os.path.join(out, serve.LOCK_NAME))
+        second = _child(out, seconds="0.2")
+        try:
+            assert second.stdout.readline().strip().startswith("REFUSED")
+            second.wait(timeout=20)
+        finally:
+            second.stdout.close(); second.stderr.close()
+    finally:
+        holder.kill(); holder.wait(timeout=10)
+        holder.stdout.close(); holder.stderr.close()
+
+
+def test_the_refusal_describes_the_lock_it_actually_takes(tmp_path):
+    out = str(tmp_path / "shadow")
+    with serve.hold_lock(out):
+        with pytest.raises(schema.HtError) as exc:
+            with serve.hold_lock(out):
+                pass
+    assert "held on the directory itself" in str(exc.value)
+    assert "only a note" in str(exc.value)
+
+
+def test_an_out_that_is_a_file_is_one_sentence_not_a_traceback(tmp_path, panel_path):
+    """A mistyped --out is a first-morning event and lands at 5:30am."""
+    target = tmp_path / "not-a-directory"
+    target.write_text("oops", encoding="utf-8")
+    args = serve.build_parser().parse_args(
+        ["--panel", panel_path, "--items", ITEMS_JSON, "--artifacts", ARTIFACTS,
+         "--timezone", "UTC", "--out", str(target)])
+    with pytest.raises(schema.HtError) as exc:
+        serve.check_args(args)
+    assert "is a file, not a directory" in str(exc.value)
+
+
+def test_an_unusable_out_directory_is_a_sentence_too(tmp_path):
+    """Whatever check_args did not catch must still not reach the operator as an OSError."""
+    target = tmp_path / "file-in-the-way"
+    target.write_text("x", encoding="utf-8")
+    with pytest.raises(schema.HtError) as exc:
+        with serve.hold_lock(str(target)):
+            pass
+    assert "cannot use" in str(exc.value)
+    assert "Errno" not in str(exc.value)
+
+
+def test_the_note_is_never_read_half_written(tmp_path):
+    """It is renamed into place, so a reader sees the old note or the new one."""
+    out = os.path.realpath(str(tmp_path / "shadow"))
+    with serve.hold_lock(out):
+        with open(os.path.join(out, serve.LOCK_NAME), encoding="utf-8") as fh:
+            assert json.load(fh)["pid"] == os.getpid()
+        assert [f for f in os.listdir(out) if f.endswith(".note")] == []

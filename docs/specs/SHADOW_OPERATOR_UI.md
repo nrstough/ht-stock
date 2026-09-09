@@ -404,3 +404,49 @@ the stored value — `status()` derives that date from the score files. `catch_u
 write it, because the CLI's catch-up does not either. The previous commit message implied that
 asymmetry was a fix rather than a deliberate difference; it is the latter, and it is now
 commented where it happens.
+
+---
+
+## Addendum 5, 2026-09-09 — fifth audit
+
+The fourth round's blocker is dead: 1400 real-process races across every branch that used to
+fail, including the stale-lock case, with zero double-holds. Every other fourth-round finding
+verified fixed. One new blocking defect, and it is the sharpest kind — the code shipped a
+sentence asserting a safety property it did not have.
+
+**Deleting the lock file admitted a second server, and the refusal said it would not.**
+flock lives on an inode; a path is only a name for one. Locking `.serve.lock` therefore left
+the obvious hole: remove the name and the next starter's `O_CREAT` mints a fresh inode
+carrying no lock. Reproduced with two real servers on one shadow directory, both running,
+both appending. Three things made it worse than operator error: the file is deliberately left
+behind after a clean shutdown, so a stray `.serve.lock` is the *normal* state of a pilot
+record and tidying it up is exactly what somebody reaches for; the refusal told them it was
+inert, which reads as "harmless"; and nothing warned afterwards.
+
+The lock is now taken on the **directory**, with `.serve.lock` demoted to a note for a person
+reading it — written whole via rename, so a reader never catches it half-written and reports a
+healthy server as unreadable. A directory cannot be swapped out from under the lock without
+taking the pilot record with it. Both properties are now tested, across real processes.
+
+Also closed: `--out` was never validated, so pointing it at a file produced a `FileExistsError`
+traceback at startup — the failure mode this module's contract exists to prevent, at 5:30am.
+`check_args` catches it, and `hold_lock` turns whatever it did not catch into a sentence.
+
+**Two numbers in Addendum 4 were wrong and are corrected here.** "84 races, all clean" was the
+total across my ad-hoc hammering, not something the suite reproduces: the in-suite test runs
+**12 races per run** (`tests/test_serve.py:1251`). And the pass count is quoted against the
+exact command CI runs (`ci/github-actions-ci.yml:38`):
+
+```
+python -m pytest tests/ -q -m "not slow"   ->   5 failed, 573 passed, 3 deselected
+```
+
+measured three consecutive times at this commit. The five failures are the pre-existing
+`tests/test_integration_guards.py` ones, which shell out to a `.venv` this container does not
+have. Quoting a count without its command is what made the earlier numbers unfalsifiable, and
+the fifth audit could not reproduce them for exactly that reason.
+
+**Recorded, not closed.** flock is node-local on NFSv3 with `local_lock` and on some CIFS
+configurations, so two *machines* mounting one share could each acquire. Irrelevant to a local
+disk or a USB stick, and no worse than what it replaced, but the guarantee is the kernel's on
+one machine rather than unconditional.

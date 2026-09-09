@@ -199,14 +199,17 @@ class RWLock:
 
 # ---- the lock file ----
 
-def _lock_note(fd):
-    """What is written inside the lock file: for a human reading it, not for the locking."""
-    os.ftruncate(fd, 0)
-    os.lseek(fd, 0, os.SEEK_SET)
-    os.write(fd, json.dumps({
-        "pid": os.getpid(),
-        "since": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-    }).encode("utf-8"))
+def _write_note(path):
+    """Who holds the lock, for a person reading the directory. Never load-bearing.
+
+    Written whole via a temp file and rename, so a reader never catches it half-written and
+    reports "(its pid could not be read)" about a server that is perfectly healthy.
+    """
+    tmp = f"{path}.note"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"pid": os.getpid(),
+                   "since": dt.datetime.now().astimezone().isoformat(timespec="seconds")}, fh)
+    os.replace(tmp, path)
 
 
 def _held_by(path):
@@ -249,28 +252,37 @@ def hold_lock(out_dir):
             "writes to a shadow directory. Run it on Linux or macOS.")
     root = os.path.realpath(out_dir)
     fresh = not os.path.isdir(root)
-    os.makedirs(root, exist_ok=True)
+    try:
+        os.makedirs(root, exist_ok=True)
+        # The lock is taken on the DIRECTORY, not on a file inside it. flock lives on an
+        # inode while a path is only a name for one, so locking .serve.lock would leave the
+        # obvious hole: delete the name, and the next starter's O_CREAT mints a fresh inode
+        # carrying no lock at all. That is not a hypothetical -- the file is deliberately
+        # left behind after a clean shutdown, so a leftover .serve.lock is the normal state
+        # of a pilot record and "tidy up that stale lock" is exactly what somebody reaches
+        # for. A directory cannot be replaced the same way without taking the record with it.
+        dir_fd = os.open(root, os.O_RDONLY)
+    except OSError as exc:
+        raise ServeError(
+            f"--out: cannot use {out_dir} as a shadow directory "
+            f"({exc.strerror}).") from None
     path = os.path.join(root, LOCK_NAME)
-
-    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(dir_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             held = _held_by(path)
             who = f"(pid {held})" if held else "(its pid could not be read)"
             raise ServeError(
                 f"another ht.serve {who} is already serving {root}. Stop that process "
-                f"first -- deleting {path} will not help, because the lock is held on an "
-                f"open file rather than by that file existing.") from None
-        _lock_note(fd)
+                f"first -- deleting {path} will not help, because the lock is held on the "
+                f"directory itself and that file is only a note saying who holds it.") from None
+        with contextlib.suppress(OSError):
+            _write_note(path)
         yield fresh
     finally:
-        # closing the descriptor releases the flock; the file is left in place because its
-        # existence is not what locks, and removing it would race a starter that has already
-        # opened it
         with contextlib.suppress(OSError):
-            os.close(fd)
+            os.close(dir_fd)
 
 
 # ---- settings ----
@@ -1029,6 +1041,9 @@ def check_args(args):
     except (zoneinfo.ZoneInfoNotFoundError, ValueError):
         raise schema.HtError(f"--timezone: {args.timezone!r} is not a timezone; write it as "
                              f"a region, e.g. America/Chicago") from None
+    if os.path.exists(args.out) and not os.path.isdir(args.out):
+        raise schema.HtError(f"--out: {args.out} is a file, not a directory; the shadow "
+                             f"directory is where the pilot's record lives")
     if args.host != LOOPBACK and not args.allow_remote:
         raise schema.HtError(
             f"--host {args.host} would serve the pilot's record to the network, and there is "
