@@ -6,14 +6,16 @@ par sheets with demand forecasts. Three pieces, all in this repo:
 1. **Phase 1 — measure** (`index.html`): a phone-friendly waste logger that produces a store's
    real baseline in two weeks of use. Nobody funds "reduces waste 15%"; people fund
    "recovers $X/year at this store." This tool produces $X.
-   **Run it** (`ht/serve.py`, `web/`): the daily loop as a page a store employee opens in a
-   browser, so starting the shadow pilot does not require a terminal.
 2. **Proof of concept — predict** (`sim/`, `model/`): a synthetic 3-year store, a global quantile
    demand network, a newsvendor decision layer, and a shadow-replay backtest of the held-out
    year. Built on **zero real data** so it settles the method without touching data-permission
    or IP questions.
 3. **The pitch** (`proposal/`, `poc/`): an executive proposal and an interactive results
    dashboard generated from the backtest.
+
+Plus the thing that makes piece 2 usable by a store rather than by a programmer:
+**`ht/serve.py` and `web/`** serve the Phase-3 daily loop as a page in a browser, so starting
+the four-week shadow pilot does not require a terminal.
 
 ## Proof-of-concept results (simulated held-out year, one store)
 
@@ -104,6 +106,12 @@ python -m model.shadow score   --panel panel.csv --items ITEMS.json --date 2026-
     --out shadow
 python -m model.shadow weekly  --panel panel.csv --items ITEMS.json --artifacts artifacts/ \
     --week-ending 2026-03-07 --out shadow
+python -m model.shadow catch-up --panel panel.csv --items ITEMS.json --out shadow
+python -m model.shadow status   --out shadow
+
+# or the same six from a browser, with the paths given once at startup
+python -m ht.serve --panel panel.csv --items ITEMS.json --artifacts artifacts/ \
+    --out shadow --timezone America/Chicago
 ```
 
 `--spec` is required whenever `--panel` is: `model.train` and `model.backtest` refuse to pick a
@@ -261,5 +269,11 @@ thought of.
 
 This tool is a digital clipboard for what you personally observe being thrown away — the same
 thing you could do on paper. It does not connect to, scrape, or store anything from company
-systems. Before Phase 2 (which needs real sales data), get written permission for data access and
+systems.
+
+That sentence is about the **logger**, and stays true of it. The forecasting side is a
+different matter and always was: it reads a store's sales export, which is why Phase 2 needs
+written permission before it reads anything. `python -m ht.serve` does not change what is
+read — it is a local wrapper over the same files, binding 127.0.0.1 with no authentication —
+but it does put that data on a port, so treat the machine it runs on as holding the export. Before Phase 2 (which needs real sales data), get written permission for data access and
 clarity on IP ownership first. That ordering protects both the project and you.

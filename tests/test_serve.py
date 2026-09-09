@@ -17,10 +17,12 @@ conftest.py patches socket.socket to raise for every test, so binding a port is 
 here by design, and the handler is a pure function of (method, path, query, body) precisely
 so that the whole route surface stays reachable without one.
 """
+import datetime as dt
 import json
 import os
 import threading
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -94,9 +96,22 @@ def test_a_second_post_for_a_date_is_refused(started):
 
 def test_the_refusal_names_the_existing_run(started):
     _, payload = started.handle("POST", "/api/morning", body={"date": TOMORROW})
-    logged = shadow.read_predictions(started.s.out_dir)["run_id"].iloc[0]
+    # str(): run_id is uuid4().hex[:12], which is all digits about one run in three hundred,
+    # and pandas then reads the column back as int64. The server already stringifies it; a
+    # test that did not would fail on those runs and look like flake.
+    logged = str(shadow.read_predictions(started.s.out_dir)["run_id"].iloc[0])
     assert logged in payload["error"]
-    assert payload["runs"][-1]["run_id"] == logged
+    assert str(payload["runs"][-1]["run_id"]) == logged
+
+
+def test_an_all_digit_run_id_is_still_reported_as_a_string(started, monkeypatch):
+    """The one-in-three-hundred case, made deterministic."""
+    monkeypatch.setattr(shadow.uuid, "uuid4",
+                        lambda: type("U", (), {"hex": "123456789012ab"})())
+    started.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    _, payload = started.handle("GET", "/api/morning", query={"date": COVERED})
+    assert payload["runs"][0]["run_id"] == "123456789012"
+    assert isinstance(payload["live_run_id"], str)
 
 
 def test_a_deliberate_reforecast_is_disclosed(started):
@@ -289,7 +304,8 @@ def test_scoring_a_day_with_no_sales_data_is_refused(started):
     """The worst thing a button can do that a command rarely does."""
     status, payload = started.handle("POST", "/api/score", body={"date": TOMORROW})
     assert status == 409
-    assert "no sales data in the panel yet" in payload["error"]
+    assert "not fully in the panel yet" in payload["error"]
+    assert "frozen once" in payload["error"]
     assert "catch-up" in payload["error"]
     assert not os.path.exists(os.path.join(started.s.out_dir, "scores",
                                            f"{TOMORROW}.csv")), \
@@ -457,12 +473,33 @@ def test_the_same_inputs_forecast_the_same_numbers(api, settings):
 
 
 def test_settings_defaults_match_the_morning_subparser(panel_path):
-    s = serve.Settings(panel=panel_path, items=ITEMS_JSON, artifacts=ARTIFACTS,
-                       timezone="UTC")
-    parser = shadow.main.__globals__  # the module, for MAX_STALENESS_DAYS
-    assert s.out_dir == "shadow"
-    assert s.store == ""
-    assert s.max_staleness == parser["MAX_STALENESS_DAYS"] == 2
+    """Read the parser, do not copy it.
+
+    The point of this criterion is to catch drift, so asserting the same literals the server
+    hard-codes would pass whatever the CLI did. shadow's parser is built inside main(), so the
+    defaults are recovered by parsing a minimal `morning` argv and comparing field by field.
+    """
+    argv = ["morning", "--panel", "p", "--artifacts", "a", "--items", "i",
+            "--date", "2026-01-01"]
+    parsed = {}
+    real_check = shadow._check_args
+
+    def capture(args):
+        parsed.update(vars(args))
+        raise KeyboardInterrupt          # stop before the command runs
+
+    shadow._check_args = capture
+    try:
+        shadow.main(argv)
+    finally:
+        shadow._check_args = real_check
+
+    assert parsed, "the morning subparser did not parse"
+    settings = serve.Settings(panel=panel_path, items=ITEMS_JSON, artifacts=ARTIFACTS,
+                              timezone="UTC")
+    assert settings.out_dir == parsed["out"]
+    assert settings.store == parsed["store"]
+    assert settings.max_staleness == parsed["max_staleness"]
 
 
 def test_the_store_timezone_decides_today(panel_path):
@@ -601,7 +638,8 @@ def test_a_second_server_on_one_directory_is_refused(tmp_path):
             with serve.hold_lock(out):
                 pass
     assert "already serving" in str(exc.value)
-    assert "--force" in str(exc.value)
+    # no flag overrides a live holder; the escape hatch for a recycled pid is named instead
+    assert serve.LOCK_NAME in str(exc.value)
 
 
 def test_a_lock_left_by_a_dead_process_is_reclaimed(tmp_path):
@@ -615,11 +653,15 @@ def test_a_lock_left_by_a_dead_process_is_reclaimed(tmp_path):
             assert json.load(fh)["pid"] == os.getpid()
 
 
-def test_force_takes_a_live_lock(tmp_path):
+def test_a_live_holder_is_never_overridden(tmp_path):
+    """There is no flag for it: two servers on one append-only record is the hazard."""
     out = str(tmp_path / "shadow")
     with serve.hold_lock(out):
-        with serve.hold_lock(out, force=True):
-            pass
+        with pytest.raises(schema.HtError) as exc:
+            with serve.hold_lock(out):
+                pass
+    assert "Stop that process first" in str(exc.value)
+    assert serve.LOCK_NAME in str(exc.value)
 
 
 def test_the_lock_is_keyed_on_the_real_path(tmp_path):
@@ -694,13 +736,32 @@ def test_an_unbuilt_frontend_names_the_build_command(tmp_path):
     assert "npm --prefix web run build" in body
 
 
-def test_static_files_cannot_escape_the_build_dir(tmp_path):
+@pytest.mark.parametrize("attack", [
+    "/../secret.txt", "/../../secret.txt", "/..%2fsecret.txt", "/%2e%2e/secret.txt",
+    "/./../secret.txt", "/subdir/../../secret.txt", "/%2e%2e%2fsecret.txt",
+])
+def test_static_files_cannot_escape_the_build_dir(tmp_path, attack):
+    """The secret's own bytes must never come back, whatever the status code says."""
     dist = tmp_path / "dist"
     dist.mkdir()
-    (dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
-    (tmp_path / "secret.txt").write_text("no", encoding="utf-8")
-    status, _, body = serve.static_response(str(dist), "/../secret.txt")
-    assert status == 404 or b"no" not in (body if isinstance(body, bytes) else b"")
+    (dist / "index.html").write_text("<!doctype html>SPA", encoding="utf-8")
+    secret = "SUPERSECRETVALUE"
+    (tmp_path / "secret.txt").write_text(secret, encoding="utf-8")
+    status, _, body = serve.static_response(str(dist), attack)
+    raw = body if isinstance(body, bytes) else body.encode()
+    assert secret.encode() not in raw, attack
+    assert status in (200, 404), attack        # 200 is the SPA entry, which is fine
+
+
+def test_static_serving_cannot_follow_a_symlink_out(tmp_path):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html>SPA", encoding="utf-8")
+    (tmp_path / "secret.txt").write_text("SUPERSECRETVALUE", encoding="utf-8")
+    os.symlink(str(tmp_path / "secret.txt"), str(dist / "escape.txt"))
+    _, _, body = serve.static_response(str(dist), "/escape.txt")
+    raw = body if isinstance(body, bytes) else body.encode()
+    assert b"SUPERSECRETVALUE" not in raw
 
 
 def test_an_unknown_path_falls_back_to_the_spa_entry(tmp_path):
@@ -794,3 +855,219 @@ def test_the_vectors_cover_both_outcomes():
     # the guard that decides whether a returned sheet is read or lost over a column width
     assert any("items" in c for c in doc["cases"]), "no case exercises truncation"
     assert any("truncate alike" in c["label"] for c in doc["cases"])
+
+
+# ---- what the post-commit audit found ----
+
+def test_the_weekly_route_cannot_read_a_file_of_the_callers_choosing(started, tmp_path):
+    """`week` named a path. os.path.join also drops the prefix on an absolute one.
+
+    weekly_report writes weekly/<ISO year-week>.json, so anything that is not a week cannot
+    name a file either -- checked before the path is built, as the sheet route does with a
+    date. Reachable over HTTP: parse_qs unquotes, so ..%2f arrives already decoded.
+    """
+    outside = tmp_path / "secret.json"
+    outside.write_text('{"aws_key": "SECRET"}', encoding="utf-8")
+    os.makedirs(os.path.join(started.s.out_dir, "weekly"), exist_ok=True)
+    for attack in ("../state", "../../secret", f"..{os.sep}..{os.sep}secret",
+                   str(tmp_path / "secret"), "/etc/passwd", "2026-W01/../../state"):
+        status, payload = started.handle("GET", "/api/weekly", query={"week": attack})
+        assert status == 404, attack
+        assert "aws_key" not in json.dumps(payload), attack
+        assert "last_gates" not in payload, attack
+
+
+def test_a_partly_landed_export_does_not_freeze_the_items_still_missing(api, tmp_path,
+                                                                       panel_path):
+    """The half of the Score guard that was missing.
+
+    score_day freezes the whole file at once, so a day where eight items have landed and one
+    has not would record that one as missing_data for the rest of the pilot -- catch_up calls
+    the same write-once function and only disclosures follow. Refusing needs ANY row waiting,
+    not all of them.
+    """
+    frame = schema.read_panel(panel_path)
+    day = pd.Timestamp(COVERED)
+    # drop one item's row for that date: the export landed for everything else
+    partial = frame[~((frame["date"] == day) & (frame["item"].astype(str) == "cake"))]
+    local = str(tmp_path / "partial.csv")
+    schema.write_panel(partial, local)
+    api.s.panel_path = local
+
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    status, payload = api.handle("POST", "/api/score", body={"date": COVERED})
+    assert status == 409
+    assert "cake" in payload["error"]
+    assert "frozen once" in payload["error"]
+    assert not os.path.exists(os.path.join(api.s.out_dir, "scores", f"{COVERED}.csv"))
+
+
+def test_a_day_whose_only_gap_is_a_missing_sheet_can_still_be_scored(api):
+    """Waiting cannot produce a sheet that was never printed, so it is not "not yet"."""
+    api.handle("POST", "/api/morning", body={"date": COVERED, "backfill": True})
+    # a second date with panel data but no sheet of its own
+    status, _ = api.handle("POST", "/api/score", body={"date": "2025-12-29"})
+    assert status in (200, 409)
+    if status == 409:
+        # if it refuses, it must not claim the panel is missing data it actually has
+        _, payload = api.handle("POST", "/api/score", body={"date": "2025-12-29"})
+        assert "no sales data" not in payload["error"]
+
+
+def test_status_reads_under_the_lock_like_every_other_reader(started):
+    """status goes through read_predictions too, and it is the route the page polls."""
+    errors = []
+
+    def writer():
+        for d in pd.date_range("2025-12-20", "2025-12-24"):
+            started.handle("POST", "/api/morning",
+                           body={"date": str(d.date()), "backfill": True})
+
+    def reader():
+        for _ in range(60):
+            status, payload = started.handle("GET", "/api/status")
+            if status != 200:
+                errors.append(payload)
+
+    threads = [threading.Thread(target=writer)] + \
+              [threading.Thread(target=reader) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors[:2]
+
+
+def test_concurrent_writes_across_dates_keep_every_row(api):
+    """Criterion 4 as written: the exact row count, not just a parseable file."""
+    dates = [str(d.date()) for d in pd.date_range("2025-12-20", "2025-12-27")]
+    results = {}
+
+    def post(day):
+        results[day] = api.handle("POST", "/api/morning",
+                                  body={"date": day, "backfill": True})[0]
+
+    threads = [threading.Thread(target=post, args=(d,)) for d in dates]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert set(results.values()) == {200}
+    logged = shadow.read_predictions(api.s.out_dir)
+    items = len(api._items())
+    assert len(logged) == len(dates) * items
+    assert sorted(str(pd.Timestamp(d).date())
+                  for d in logged["for_date"].unique()) == sorted(dates)
+
+
+def test_a_live_holders_lock_survives_the_refusal(tmp_path):
+    """The refused caller must not remove the lock it failed to take."""
+    out = str(tmp_path / "shadow")
+    with serve.hold_lock(out):
+        with pytest.raises(schema.HtError):
+            with serve.hold_lock(out):
+                pass
+        assert os.path.exists(os.path.join(os.path.realpath(out), serve.LOCK_NAME))
+
+
+def test_two_simultaneous_starts_cannot_both_take_the_lock(tmp_path):
+    """exists() then open() is not atomic; O_EXCL is."""
+    out = str(tmp_path / "shadow")
+    barrier = threading.Barrier(2)
+    held = []
+
+    def take():
+        barrier.wait()
+        try:
+            with serve.hold_lock(out):
+                held.append(1)
+                pd.Timestamp.now()          # hold it briefly
+                import time as _t
+                _t.sleep(0.2)
+        except schema.HtError:
+            pass
+
+    threads = [threading.Thread(target=take) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(held) == 1
+
+
+def test_a_writer_is_not_starved_by_a_stream_of_readers(started):
+    """The 5:30am sheet must not be refused because the page keeps polling."""
+    stop = threading.Event()
+    lock = serve.RWLock()
+
+    def reader():
+        while not stop.is_set():
+            with lock.read():
+                pass
+
+    readers = [threading.Thread(target=reader, daemon=True) for _ in range(6)]
+    for t in readers:
+        t.start()
+    try:
+        with lock.write(timeout=5.0):
+            pass                            # acquiring at all is the assertion
+    finally:
+        stop.set()
+        for t in readers:
+            t.join(timeout=2)
+
+
+@pytest.mark.parametrize("query,field", [
+    ({"weeks": "lots"}, "weeks"),
+    ({"weeks": 10 ** 6}, "weeks"),
+])
+def test_a_bad_weeks_value_is_a_sentence_not_a_pandas_message(started, query, field):
+    status, payload = started.handle("POST", "/api/weekly",
+                                     body=dict(week_ending="2026-01-04", **query))
+    assert status == 400
+    assert payload["error"].startswith(field)
+    for leak in ("invalid literal", "nanoseconds", "Traceback", "int() with base"):
+        assert leak not in payload["error"]
+
+
+@pytest.mark.parametrize("route", ["/api/scores", "/api/predictions"])
+def test_a_bad_date_window_is_a_sentence(started, route):
+    status, payload = started.handle("GET", route, query={"to": "lunchtime"})
+    assert status == 400
+    assert "YYYY-MM-DD" in payload["error"]
+    assert "Unknown datetime string" not in payload["error"]
+
+
+def test_every_route_that_reads_the_record_guards_the_shadow_dir(api):
+    """The earlier version of this test checked six of them and was named for all.
+
+    /api/config is deliberately absent: it reports the panel, the items file and the model,
+    none of which live in the shadow directory, so it has nothing to guard.
+    """
+    guarded = [("GET", "/api/status", {}),
+               ("GET", "/api/scores", {}),
+               ("GET", "/api/predictions", {}),
+               ("GET", "/api/morning", {"query": {"date": TOMORROW}}),
+               ("GET", "/api/entry-order", {"query": {"date": TOMORROW}}),
+               ("GET", "/api/sheet/2026-01-01.txt", {}),
+               ("GET", "/api/weekly", {}),
+               ("POST", "/api/weekly", {"body": {"week_ending": "2026-01-04"}}),
+               ("POST", "/api/enter", {"body": {"date": TOMORROW, "lines": ["bread,1,"]}}),
+               ("POST", "/api/score", {"body": {"date": TOMORROW}}),
+               ("POST", "/api/catch-up", {"body": {}})]
+    for method, path, kw in guarded:
+        status, payload = api.handle(method, path, **kw)
+        assert status == 400, (path, status, payload)
+        assert "no shadow directory" in payload["error"], path
+    # and the one that legitimately does not need it
+    assert api.handle("GET", "/api/config")[0] == 200
+
+
+def test_json_safe_renders_a_type_it_does_not_know_rather_than_passing_it_on(started):
+    """A value json.dumps cannot take would drop the connection at the socket."""
+    import decimal
+    for odd in (np.datetime64("2026-01-01"), pd.Timedelta("1D"), decimal.Decimal("1.5"),
+                b"bytes", complex(1, 2), dt.time(5, 30)):
+        json.dumps(serve.json_safe(odd))
+    assert serve.json_safe(float("inf")) is None
+    assert serve.json_safe(10 ** 30) == 10 ** 30

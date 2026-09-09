@@ -64,12 +64,18 @@ MAX_BODY_BYTES = 1 << 20
 LOCK_NAME = ".serve.lock"
 WRITE_TIMEOUT_S = 20.0
 
-# Only these statuses mean "the export has not landed for this day". A closed or partial day
-# is settled rather than pending -- weekly_report counts it as covered -- so it stays
-# scoreable.
-UNSETTLED = {"missing_data", "missing_sheet"}
+# The one status that says "the store's export has not landed for this item-day yet", and the
+# only one waiting can fix. A closed or partial day is settled rather than pending --
+# weekly_report counts it as covered -- so it stays scoreable. missing_sheet is permanent by
+# construction: no sheet was logged for that item, and no amount of waiting produces one, so a
+# day whose only gap is missing_sheet rows is as complete as it will ever be.
+UNSETTLED = {"missing_data"}
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# weekly_report names its file after res["week"], an ISO year-week. Anything else reaching
+# os.path.join would read a file the caller chose -- and an absolute path would discard the
+# directory prefix entirely.
+WEEK_RE = re.compile(r"^\d{4}-W\d{2}$")
 
 
 class ServeError(schema.HtError):
@@ -112,7 +118,14 @@ def json_safe(obj):
         return None if math.isnan(obj) or math.isinf(obj) else obj
     if isinstance(obj, np.ndarray):
         return [json_safe(v) for v in obj.tolist()]
-    return obj
+    if isinstance(obj, (str, int)):
+        return obj
+    # Anything else -- np.datetime64, Timedelta, Period, Decimal, bytes -- is rendered rather
+    # than passed through. Returning it unchanged would push the failure into json.dumps at
+    # the socket, where it drops the connection instead of answering.
+    with contextlib.suppress(Exception):
+        return str(obj)
+    return None
 
 
 # ---- one writer at a time, and readers that never see half a row ----
@@ -131,11 +144,17 @@ class RWLock:
         self._cond = threading.Condition()
         self._readers = 0
         self._writer = False
+        self._waiting_writers = 0
 
     @contextlib.contextmanager
     def read(self, timeout=WRITE_TIMEOUT_S):
         with self._cond:
-            if not self._cond.wait_for(lambda: not self._writer, timeout):
+            # writer preference: a reader that arrives while a writer is queued waits behind
+            # it. Without this the page's own status polling can hold the 5:30am morning POST
+            # off until it times out into a 503 -- readers are frequent and cheap here, and a
+            # writer that never acquires is the one failure a store would actually notice.
+            if not self._cond.wait_for(
+                    lambda: not self._writer and not self._waiting_writers, timeout):
                 raise ServeError("the server is busy writing; try again in a moment", 503)
             self._readers += 1
         try:
@@ -148,12 +167,17 @@ class RWLock:
     @contextlib.contextmanager
     def write(self, timeout=WRITE_TIMEOUT_S):
         with self._cond:
-            if not self._cond.wait_for(lambda: not self._writer and not self._readers,
-                                       timeout):
-                # catch-up loops score_day over every logged date; a morning sheet queued
-                # behind it would otherwise hang the browser with nothing on screen
-                raise ServeError("another operation is still running; try again in a "
-                                 "moment", 503)
+            self._waiting_writers += 1
+            try:
+                if not self._cond.wait_for(lambda: not self._writer and not self._readers,
+                                           timeout):
+                    # catch-up loops score_day over every logged date; a morning sheet queued
+                    # behind it would otherwise hang the browser with nothing on screen
+                    raise ServeError("another operation is still running; try again in a "
+                                     "moment", 503)
+            finally:
+                self._waiting_writers -= 1
+                self._cond.notify_all()
             self._writer = True
         try:
             yield
@@ -189,7 +213,7 @@ def _alive(pid, start_time):
 
 
 @contextlib.contextmanager
-def hold_lock(out_dir, force=False):
+def hold_lock(out_dir):
     """Refuse a second server on one shadow directory -- but never because of a corpse.
 
     A pid file alone is a trap: a kill, an out-of-memory death or a power cut leaves it
@@ -209,21 +233,41 @@ def hold_lock(out_dir, force=False):
     fresh = not os.path.isdir(root)
     os.makedirs(root, exist_ok=True)
     path = os.path.join(root, LOCK_NAME)
-    if os.path.exists(path) and not force:
+    mine = json.dumps({"pid": os.getpid(), "start_time": _proc_start_time(os.getpid()),
+                       "since": dt.datetime.now().astimezone().isoformat(timespec="seconds")})
+
+    def _claim():
+        """Create the lock or fail; O_EXCL so two simultaneous starts cannot both win."""
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(mine)
+
+    while True:
         try:
-            with open(path, encoding="utf-8") as fh:
-                held = json.load(fh)
-        except (OSError, ValueError):
-            held = {}
-        pid = int(held.get("pid") or 0)
-        if _alive(pid, str(held.get("start_time", ""))):
-            raise ServeError(
-                f"another ht.serve (pid {pid}) is already serving {root}; stop it first, or "
-                f"pass --force if you are sure it is gone")
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump({"pid": os.getpid(), "start_time": _proc_start_time(os.getpid()),
-                   "since": dt.datetime.now().astimezone().isoformat(timespec="seconds")},
-                  fh)
+            _claim()
+            break
+        except FileExistsError:
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    held = json.load(fh)
+            except (OSError, ValueError):
+                held = {}
+            pid = int(held.get("pid") or 0)
+            if _alive(pid, str(held.get("start_time", ""))):
+                # There is no flag for this on purpose. Overriding a LIVE holder would leave
+                # two servers appending to one append-only record, which is the whole thing
+                # the lock exists to prevent -- and no operator pressed for time can weigh
+                # that. If pid is not in fact an ht.serve (a recycled pid), the escape hatch
+                # is deleting the file, which is a deliberate act rather than a flag.
+                raise ServeError(
+                    f"another ht.serve (pid {pid}) is already serving {root}. Stop that "
+                    f"process first. If pid {pid} is not an ht.serve, delete "
+                    f"{os.path.join(root, LOCK_NAME)} and start again.")
+            # A dead holder's lock is reclaimed with no flag and no fuss: a kill, an
+            # out-of-memory death or a power cut must not be what stops tomorrow's sheet
+            # being printed, in front of the person least able to diagnose it.
+            with contextlib.suppress(OSError):
+                os.remove(path)
     try:
         yield fresh
     finally:
@@ -338,6 +382,11 @@ class Api:
             raise ServeError(f"{field}: {text!r} is not a date ({exc}); write it as "
                              f"YYYY-MM-DD") from None
 
+    def _window(self, query):
+        """from/to as dates or not at all -- pandas' parse errors are not sentences."""
+        return tuple(self._date(query[k], k) if query.get(k) else None
+                     for k in ("from", "to"))
+
     def _runs_for(self, for_date):
         """Every logged run for a date, oldest first -- before keep="last" collapses them.
 
@@ -370,7 +419,12 @@ class Api:
 
     def status(self):
         self._require_out()
-        st = shadow.status(self.s.out_dir)
+        with self.lock.read():
+            # status reads predictions.csv and scores/ through read_predictions/read_scores,
+            # so it tears on a concurrent append exactly like /api/predictions would. It is
+            # also the route the page polls, which makes it the likeliest one to be reading
+            # while a morning sheet is being written.
+            st = shadow.status(self.s.out_dir)
         st["today"] = self.s.today()
         st["store"] = self.s.store
         # an empty record and a mistyped --out look identical from in here, and the CLI's
@@ -381,8 +435,9 @@ class Api:
         return 200, json_safe(st)
 
     def config(self):
-        items = self._items()
-        panel = self._panel()
+        with self.lock.read():
+            items = self._items()
+            panel = self._panel()
         dates = pd.to_datetime(panel["date"])
         meta, version = {}, ""
         with contextlib.suppress(OSError, ValueError, KeyError):
@@ -586,12 +641,24 @@ class Api:
             path = os.path.join(self.s.out_dir, "scores", f"{for_date.date()}.csv")
             fresh = shadow._score_rows(panel, items, self.s.out_dir, for_date)
             if not os.path.exists(path):
-                if not len(fresh) or set(fresh["status"].astype(str)) <= UNSETTLED:
+                # ANY row still waiting on the export is enough to refuse, not just all of
+                # them: score_day freezes the whole file at once, so a day where eight items
+                # have landed and one has not would freeze that one as missing_data for good.
+                waiting = sorted(fresh.loc[fresh["status"].astype(str).isin(UNSETTLED),
+                                           "item"].astype(str)) if len(fresh) else []
+                if not len(fresh):
                     raise ServeError(
-                        f"{for_date.date()} has no sales data in the panel yet, so scoring it "
-                        f"now would freeze an empty verdict that cannot be re-scored later. "
-                        f"Ingest the day's export first, or use catch-up, which scores every "
-                        f"day that has data and skips the ones that do not.", 409)
+                        f"{for_date.date()} has nothing to score: no sheet was logged for it "
+                        f"and the panel carries no rows for it.", 409)
+                if waiting:
+                    raise ServeError(
+                        f"{for_date.date()} is not fully in the panel yet -- "
+                        f"{len(waiting)} item(s) have no sales data ({', '.join(waiting[:4])}"
+                        f"{', …' if len(waiting) > 4 else ''}). A day's verdict is frozen once "
+                        f"and cannot be re-scored, so scoring now would record those items as "
+                        f"missing for the rest of the pilot. Ingest the day's export first, or "
+                        f"use catch-up, which scores every day that is complete and skips the "
+                        f"ones that are not.", 409)
             rows = shadow.score_day(panel, items, self.s.out_dir, for_date)
             shadow._write_state(self.s.out_dir, last_scored_date=str(for_date.date()))
         counts = rows["status"].astype(str).value_counts().to_dict()
@@ -613,7 +680,13 @@ class Api:
         """The district-manager page. A POST because the CLI's weekly writes files."""
         self._require_out()
         week_ending = self._date(body.get("week_ending"), "week_ending")
-        weeks = int(body.get("weeks") or 1)
+        weeks = body.get("weeks") or 1
+        try:
+            weeks = int(weeks)
+        except (TypeError, ValueError):
+            raise ServeError(f"weeks: {weeks!r} is not a whole number of weeks") from None
+        if not 1 <= weeks <= 52:
+            raise ServeError(f"weeks: {weeks} is not between 1 and 52") from None
         include_backfilled = bool(body.get("include_backfilled"))
         panel = self._panel()
         items = self._items()
@@ -635,8 +708,13 @@ class Api:
         self._require_out()
         week = query.get("week")
         if week:
-            path = os.path.join(self.s.out_dir, "weekly", f"{week}.json")
-            if not os.path.exists(path):
+            # the shape is checked before the path is built, the same way the sheet route
+            # leans on DATE_RE: a name that cannot be a week cannot name a file either
+            if not WEEK_RE.match(str(week)):
+                raise ServeError(f"{week!r} is not a week; write it as 2026-W01", 404)
+            root = os.path.realpath(os.path.join(self.s.out_dir, "weekly"))
+            path = os.path.realpath(os.path.join(root, f"{week}.json"))
+            if os.path.dirname(path) != root or not os.path.exists(path):
                 raise ServeError(f"no weekly report has been made for {week}", 404)
             with self.lock.read(), open(path, encoding="utf-8") as fh:
                 return 200, json.load(fh)
@@ -648,13 +726,13 @@ class Api:
     def scores(self, query):
         self._require_out()
         with self.lock.read():
-            df = shadow.read_scores(self.s.out_dir, query.get("from"), query.get("to"))
+            df = shadow.read_scores(self.s.out_dir, *self._window(query))
         return 200, json_safe({"rows": df})
 
     def predictions(self, query):
         self._require_out()
         with self.lock.read():
-            df = shadow.read_predictions(self.s.out_dir, query.get("from"), query.get("to"))
+            df = shadow.read_predictions(self.s.out_dir, *self._window(query))
         return 200, json_safe({"rows": df})
 
     # ---- dispatch ----
@@ -780,7 +858,14 @@ def make_handler(api):
             status, payload = api.handle(method, parsed.path, query, body)
             if isinstance(payload, dict) and "content_type" in payload:
                 return self._send(status, payload["content_type"], payload["body"])
-            return self._send(status, "application/json", json.dumps(payload))
+            try:
+                body_text = json.dumps(payload)
+            except (TypeError, ValueError):
+                # json_safe should have made this impossible; if a field ever slips past it,
+                # answer with a sentence rather than dropping the connection mid-response
+                status, body_text = 500, json.dumps(
+                    {"error": "the server could not encode its own answer; check the log"})
+            return self._send(status, "application/json", body_text)
 
         def do_GET(self):
             self._dispatch("GET")
@@ -824,8 +909,6 @@ def build_parser():
                     help="required to bind anything but 127.0.0.1. There is no "
                          "authentication: anyone who can reach the port can write to the "
                          "pilot's record")
-    ap.add_argument("--force", action="store_true",
-                    help="take the shadow directory's lock even if another server holds it")
     return ap
 
 
@@ -872,7 +955,7 @@ def main(argv=None):
                         timezone=args.timezone, entered_by=args.by,
                         web_dist=args.web or os.path.join(repo, "web", "dist"))
     try:
-        with hold_lock(args.out, force=args.force) as fresh_out:
+        with hold_lock(args.out) as fresh_out:
             api = Api(settings, fresh_out=fresh_out)
             httpd = Server((args.host, args.port), make_handler(api))
             print(f"ht.serve  ->  http://{args.host}:{args.port}")
