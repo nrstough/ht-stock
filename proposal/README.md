@@ -8,7 +8,17 @@ Three documents, one set of numbers. Every dollar figure in all three comes from
 | `Fresh-Forecast-Leadership-Deck.pptx` | district and division leadership, presented in a room | generated: `node tools/build_deck_pptx.js` (needs `pptxgenjs` on `NODE_PATH`) |
 | `deck.html` | the same deck, opened in a browser or printed to PDF with `P` | generated: `python tools/build_deck.py` |
 | `executive-proposal.html` | the leave-behind: the memo leadership reads after the meeting | hand-written against the frozen results |
+| `Fresh-Forecast-Leadership-Deck.pdf` | emailing the deck, or presenting where PowerPoint is not available | printed from `deck.html` at 1280x720 |
+| `Fresh-Forecast-Executive-Proposal.pdf` | emailing or printing the memo | printed from `executive-proposal.html` on letter paper |
 | `proposal.html` | the original store-level proposal, written to a store manager | hand-written against the frozen results |
+
+Both PDFs are printed from the HTML with a headless browser, which is what the two print
+stylesheets are written for. Any browser's own print-to-PDF produces the same thing:
+
+```
+deck.html                -> 1280x720 page size, backgrounds on   -> one slide per page
+executive-proposal.html  -> letter portrait, backgrounds on      -> four pages
+```
 
 The generated files are checked in so the pitch can be opened without a build step. Both
 generators read `results/results.json` at build time, so the slides cannot drift from the backtest
