@@ -119,7 +119,9 @@ in its export measure accuracy on fully-served days at all.
 `MAP.json` and `ITEMS.json` start as `config/source_mapping.example.json` and
 `config/items.example.json`. `docs/DATA_CONTRACT.md` is what a store's category manager or IT
 contact reads; `docs/REAL_DATA_READINESS.md` is the day-one checklist, including what is ready,
-what still needs the store, and what is still missing.
+what still needs the store, and what is still missing. `docs/PRODUCTION_PLAN.md` sits above both
+and is the single status page: every chunk of work, what is built, what is not, and the critical
+path through the four things that block everything else.
 
 Evaluation on a real panel uses only what a store can see: accuracy on days where demand was
 fully served, calibration as a two-sided bracket rather than a point, and economics reported as
