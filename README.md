@@ -10,8 +10,10 @@ par sheets with demand forecasts. Three pieces, all in this repo:
    demand network, a newsvendor decision layer, and a shadow-replay backtest of the held-out
    year. Built on **zero real data** so it settles the method without touching data-permission
    or IP questions.
-3. **The pitch** (`proposal/`, `poc/`): an executive proposal and an interactive results
-   dashboard generated from the backtest.
+3. **The pitch** (`proposal/`, `poc/`): a seventeen-slide leadership deck (PowerPoint and a
+   browser/print version, both generated from the backtest), an executive proposal for district
+   and division leadership, the original store-level proposal, and an interactive results
+   dashboard. `proposal/README.md` says which is which and how to regenerate them.
 
 ## Proof-of-concept results (simulated held-out year, one store)
 
