@@ -101,7 +101,7 @@ These are ours to close and need nobody's permission.
 
 | # | Item | Status | Effort |
 |---|---|---|---|
-| 1 | **Wire up CI.** `ci/github-actions-ci.yml` exists with instructions to copy it to `.github/workflows/ci.yml`. That directory does not exist, so 360 test functions across 21 files have never run automatically | **TODO** | Minutes |
+| 1 | **Wire up CI.** 360 test functions across 21 files have never run automatically. The workflow is written and validated; it just is not installed | **BLOCKED** | 30 seconds, by hand |
 | 2 | Add gradient-boosted trees as a fourth backtest policy | TODO | Hours |
 | 3 | Benchmark a pretrained time-series foundation model zero-shot | TODO | Hours |
 | 4 | Exercise the logger-to-panel path in the rehearsal | TODO | Hours |
@@ -109,7 +109,23 @@ These are ours to close and need nobody's permission.
 
 On item 1: the suite is inference-only, the backtest replays a frozen checkpoint, and
 `tests/conftest.py` monkeypatches the socket layer so an accidental network fetch fails
-rather than passing quietly. It is ready to run. It simply is not running.
+rather than passing quietly. It is ready to run.
+
+It cannot be installed from a Claude session. GitHub refuses any push from an App without
+`workflows` permission that creates or updates a file under `.github/workflows/`, which is
+the constraint the header of `ci/github-actions-ci.yml` was written to record. Installing it
+is a local git operation by a human:
+
+```bash
+mkdir -p .github/workflows
+cp ci/github-actions-ci.yml .github/workflows/ci.yml
+git add .github/workflows/ci.yml
+git commit -m "Enable CI"
+git push
+```
+
+The YAML was parsed and validated in this repository: one job, eleven steps. Nothing about
+it needs editing first.
 
 On item 2: the evidence favours it. Retail daily demand forecasting with covariates is
 what gradient boosting wins at, and the oracle bound says the entire remaining headroom
