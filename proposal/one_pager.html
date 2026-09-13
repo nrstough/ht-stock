@@ -12,9 +12,6 @@
     --green-soft: #E3F0E8;
     --amber: #A8660F;
     --amber-soft: #F8EBD6;
-    --done: #1E6A48;
-    --built: #A8660F;
-    --todo: #7A847D;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -28,9 +25,6 @@
       --green-soft: #1E3128;
       --amber: #E4A552;
       --amber-soft: #3A2C16;
-      --done: #6CC497;
-      --built: #E4A552;
-      --todo: #82897F;
     }
   }
   :root[data-theme="dark"] {
@@ -44,98 +38,64 @@
     --green-soft: #1E3128;
     --amber: #E4A552;
     --amber-soft: #3A2C16;
-    --done: #6CC497;
-    --built: #E4A552;
-    --todo: #82897F;
   }
 
   body {
     background: var(--bg);
     color: var(--ink);
     font-family: "IBM Plex Sans", "Segoe UI", Helvetica, Arial, sans-serif;
-    font-size: 16px;
-    line-height: 1.5;
+    font-size: 17px;
+    line-height: 1.55;
     padding-inline: 20px;
     padding-block: 40px 64px;
   }
-  .page { max-width: 720px; margin: 0 auto; display: grid; gap: 36px; }
+  .page { max-width: 680px; margin: 0 auto; display: grid; gap: 40px; }
 
-  h1, h2, h3 {
+  h1, h2 {
     font-family: "Archivo", "Helvetica Neue", Arial, sans-serif;
     margin: 0;
     text-wrap: balance;
     line-height: 1.15;
   }
-  h1 { font-size: 2.1rem; font-weight: 800; font-stretch: 125%; letter-spacing: -0.01em; }
-  h2 { font-size: 1.15rem; font-weight: 700; font-stretch: 100%; }
-  p { margin: 0; max-width: 62ch; }
-  p + p { margin-top: 0.75em; }
+  h1 { font-size: 2rem; font-weight: 800; font-stretch: 125%; letter-spacing: -0.01em; }
+  h2 { font-size: 1.1rem; font-weight: 700; }
+  p { margin: 0; max-width: 60ch; }
   strong { font-weight: 600; }
 
   .eyebrow {
     font-size: 0.72rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
     color: var(--muted);
   }
-  .fill {
-    border-bottom: 1.5px dashed var(--amber);
-    color: var(--amber);
-    padding-inline: 2px;
-  }
+  .fill { border-bottom: 1.5px dashed var(--amber); color: var(--amber); padding-inline: 2px; }
 
   header { display: grid; gap: 14px; }
-  .meta { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 0.9rem; color: var(--ink-2); }
-  .meta span b { font-weight: 600; color: var(--ink); }
-  .lede { font-size: 1.15rem; line-height: 1.45; color: var(--ink); max-width: 56ch; }
+  .lede { font-size: 1.2rem; line-height: 1.45; max-width: 52ch; }
+  .meta { font-size: 0.9rem; color: var(--ink-2); }
 
   section { display: grid; gap: 14px; }
 
-  /* status strip */
-  .status { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-  .status div {
-    border-top: 3px solid var(--todo);
-    padding-top: 10px;
-    font-size: 0.86rem;
-    line-height: 1.35;
-    color: var(--ink-2);
-  }
-  .status div.done { border-color: var(--done); }
-  .status div.built { border-color: var(--built); }
-  .status b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
-  .status .tag { display: block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 4px; }
-  .done .tag { color: var(--done); }
-  .built .tag { color: var(--built); }
-  .todo .tag { color: var(--todo); }
-  @media (max-width: 560px) { .status { grid-template-columns: 1fr 1fr; } }
-
-  /* numbers */
-  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  .tile { background: var(--surface); border: 1px solid var(--line); padding: 14px 16px; display: grid; gap: 4px; }
-  .tile .n { font-family: "Archivo", sans-serif; font-weight: 800; font-stretch: 125%; font-size: 1.9rem; line-height: 1; color: var(--green); font-variant-numeric: tabular-nums; }
-  .tile.amber .n { color: var(--amber); }
-  .tile .l { font-size: 0.84rem; color: var(--ink-2); line-height: 1.3; }
-  @media (max-width: 560px) { .tiles { grid-template-columns: 1fr; } }
-  .note { font-size: 0.86rem; color: var(--muted); max-width: 66ch; }
-
-  /* lists */
-  ul, ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 64ch; }
+  ul, ol { margin: 0; padding-left: 1.2em; display: grid; gap: 10px; max-width: 60ch; }
   li::marker { color: var(--muted); }
 
-  /* asks */
-  .asks { display: grid; gap: 0; border-top: 1px solid var(--line); }
-  .asks div { display: grid; grid-template-columns: 150px 1fr; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
-  .asks div b { font-weight: 600; }
-  .asks div span { color: var(--ink-2); font-size: 0.95rem; }
-  @media (max-width: 560px) { .asks div { grid-template-columns: 1fr; gap: 4px; } }
+  .ask { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--green); padding: 20px 22px; display: grid; gap: 12px; }
+  .ask h2 { color: var(--green); }
+  .ask ol { gap: 8px; }
 
-  /* timeline */
-  .plan { display: grid; gap: 0; }
-  .plan div { display: grid; grid-template-columns: 96px 1fr; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); padding: 14px 16px; display: grid; gap: 6px; }
+  .tile .n { font-family: "Archivo", sans-serif; font-weight: 800; font-stretch: 125%; font-size: 2rem; line-height: 1; color: var(--green); font-variant-numeric: tabular-nums; }
+  .tile .l { font-size: 0.88rem; color: var(--ink-2); line-height: 1.35; }
+  @media (max-width: 560px) { .tiles { grid-template-columns: 1fr; } }
+  .note { font-size: 0.9rem; color: var(--muted); max-width: 62ch; }
+
+  .plan { display: grid; }
+  .plan div { display: grid; grid-template-columns: 100px 1fr; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
   .plan div:first-child { border-top: 1px solid var(--line); }
-  .plan .w { font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; color: var(--muted); padding-top: 3px; }
-  .plan b { font-weight: 600; }
-  .plan span { color: var(--ink-2); font-size: 0.95rem; }
+  .plan .w { font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; color: var(--muted); padding-top: 4px; }
+  .plan p { color: var(--ink-2); }
+  .plan b { color: var(--ink); font-weight: 600; }
+  @media (max-width: 480px) { .plan div { grid-template-columns: 1fr; gap: 2px; } }
 
-  /* morning sheet */
   .sheet {
     background: var(--surface);
     border: 1px solid var(--line);
@@ -149,53 +109,72 @@
   }
   .sheet b { color: var(--ink); font-weight: 500; }
 
-  .gate { background: var(--green-soft); border-left: 3px solid var(--green); padding: 12px 16px; max-width: 66ch; }
-  .caveat { background: var(--amber-soft); border-left: 3px solid var(--amber); padding: 12px 16px; max-width: 66ch; }
-
-  footer { font-size: 0.82rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; max-width: 66ch; }
+  .box { border-left: 3px solid var(--green); background: var(--green-soft); padding: 12px 16px; max-width: 62ch; }
+  .box.amber { border-color: var(--amber); background: var(--amber-soft); }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
 <div class="page">
 
   <header>
-    <div class="eyebrow">Internal proposal · Prepared foods · 2-minute read</div>
-    <h1>Fresh Forecast: a 90-day pilot to cut prepared-food waste</h1>
-    <p class="lede">Every night we throw away food we made too much of. Every week we send customers home from an empty case. Both are the same problem: the par sheet can't see tomorrow. A forecast can. The software is built. I need permission to point it at one store.</p>
-    <div class="meta">
-      <span>Store <b class="fill">[Store #]</b></span>
-      <span>Prepared by <b class="fill">[Your name, role]</b></span>
-      <span>Updated <b>September 2026</b></span>
-    </div>
+    <div class="eyebrow">Proposal · Prepared foods · Store <span class="fill">[#]</span></div>
+    <h1>A 90-day pilot to cut prepared-food waste</h1>
+    <p class="lede">I have built a tool that tells the kitchen how much to make each morning, based on what actually sold on days like tomorrow. I am asking to test it at this store for 90 days. If it works, we throw away less food without leaving the case empty.</p>
+    <p class="meta"><span class="fill">[Your name, role]</span> · September 2026</p>
   </header>
 
-  <section>
-    <h2>Where things stand</h2>
-    <div class="status">
-      <div class="done"><span class="tag">Done</span><b>Waste logger</b>A phone tool that measures a store's real waste in dollars in two weeks.</div>
-      <div class="done"><span class="tag">Done</span><b>Proof of concept</b>Forecasting system built and tested on a simulated store. No company data used.</div>
-      <div class="built"><span class="tag">Built, not run</span><b>Real-data hookup</b>Reads a store's own sales export. Fully rehearsed on a mock file. Has never seen real data.</div>
-      <div class="todo"><span class="tag">Waiting on approval</span><b>Pilot</b>Four weeks of scored predictions, then seven weeks live. Nothing starts without a yes.</div>
-    </div>
+  <section class="ask">
+    <h2>What I need from you</h2>
+    <ol>
+      <li><strong>Permission, in writing,</strong> to use this store's daily sales for the pilot items. Read-only, and only for the pilot.</li>
+      <li><strong>A daily count of what we put out</strong> for those items. A photo of a clipboard is enough. Without this we cannot measure waste, so nothing else works.</li>
+      <li><strong>About 40 to 80 hours of off-floor time</strong> spread over the 90 days.</li>
+      <li><strong>Agreement now on what counts as success,</strong> and on recognition if we get there.</li>
+    </ol>
   </section>
 
   <section>
-    <h2>What the proof of concept showed</h2>
-    <p>A simulated store ran for three years. The model learned from the first two and was judged on the third, against a well-run par sheet. Waste (at retail value) over that year:</p>
+    <h2>The problem</h2>
+    <p>The par sheet sets a fixed quantity for each item. It cannot see that tomorrow is rainy, or a payday, or the day before a holiday. So we make too much on slow days and sell out on busy ones. Industry figures put prepared-food waste at 15 to 25 percent of everything we make.</p>
+  </section>
+
+  <section>
+    <h2>What already exists</h2>
+    <ul>
+      <li><strong>A phone app that logs what gets thrown out.</strong> Two weeks of use gives this store's real waste figure in dollars per year.</li>
+      <li><strong>A forecasting model</strong> that turns sales history, the calendar and the weather into a morning make-list. It was built and tested on a simulated store, so no company data has been used.</li>
+      <li><strong>The connection to a real sales export.</strong> It is written and tested against a mock file. It has never run on real data, because I have not asked yet. This document is the ask.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>What the test showed</h2>
+    <p>Over one full simulated year, compared with a well-run par sheet:</p>
     <div class="tiles">
-      <div class="tile amber"><span class="n">$138K</span><span class="l">Par sheet, today's method<br>18.8% of production wasted</span></div>
-      <div class="tile"><span class="n">−37%</span><span class="l">Model, with shelf availability held at today's level</span></div>
-      <div class="tile"><span class="n">−60%</span><span class="l">Model at the profit-optimal setting (availability 98% → 96%)</span></div>
+      <div class="tile"><span class="n">−37%</span><span class="l">waste, with the shelves kept as full as they are today</span></div>
+      <div class="tile"><span class="n">−60%</span><span class="l">waste, if we accept slightly more sellouts</span></div>
+      <div class="tile"><span class="n">13%</span><span class="l">forecast error, against 15.5% for a simple trailing average</span></div>
     </div>
-    <p class="note">These are simulated dollars. They prove the method works, not what this store will save. That is why the pilot promises 10–15%, not 37–60%, and why it is judged against the store's own measured baseline.</p>
+    <p class="note">Simulated store, simulated dollars. They show the method works. This store's real number comes from the pilot, and I am promising 10 to 15 percent, not 37.</p>
   </section>
 
   <section>
-    <h2>What the kitchen would actually see</h2>
-    <p>One printed sheet each morning. No new screens, no new system. The manager can override any line, and overrides are recorded.</p>
+    <h2>How the pilot runs</h2>
+    <div class="plan">
+      <div><span class="w">Weeks 1–2</span><p><b>Measure.</b> Staff log waste with the app. Result: our real baseline, in dollars per year.</p></div>
+      <div><span class="w">Weeks 3–6</span><p><b>Watch.</b> The model prints a make-list every morning. The kitchen ignores it. We score its predictions against real sales.</p></div>
+      <div><span class="w">Weeks 7–13</span><p><b>Follow.</b> The kitchen uses the list. The manager can override any line. We measure waste against the baseline.</p></div>
+    </div>
+    <div class="box"><strong>The off-ramp.</strong> Before the kitchen changes anything, the model has to pass five checks we agree on now. If it fails any of them, we stop at week 6 and nothing on the floor has changed.</div>
+    <p><strong>Success means</strong> waste dollars down at least 10 percent against the baseline, with no real drop in what is on the shelf.</p>
+  </section>
+
+  <section>
+    <h2>What the kitchen sees</h2>
+    <p>One printed sheet a day. No new screens and no new system.</p>
     <div class="sheet"><b>MORNING SHEET   Tue 2026-03-03   Store 0123          rain, high 44F</b>
 <b>ITEM                MAKE   BATCH   NOTE</b>
-Pizza slice           42      6     Rain: expect slower lunch
+Pizza slice           42      6     Rain: expect a slower lunch
 Rotisserie chicken    18      6
 Hot bar (lb)          58     --
 Sub sandwiches        24      8     Payday week
@@ -205,43 +184,18 @@ Bread loaf            30     10     3-day shelf life: one day's demand</div>
   </section>
 
   <section>
-    <h2>The 90-day plan</h2>
-    <div class="plan">
-      <div><span class="w">Weeks 1–2</span><div><b>Baseline.</b> <span>Log every discarded item on 5–10 pilot products with the waste tool. Output: this store's real waste number in dollars per year.</span></div></div>
-      <div><span class="w">Weeks 3–6</span><div><b>Shadow mode.</b> <span>The model trains on this store's sales history and prints its sheet every morning. The kitchen ignores it. Each forecast is scored against what really sold.</span></div></div>
-      <div><span class="w">Weeks 7–13</span><div><b>Live.</b> <span>The kitchen follows the sheet. Waste and sellouts are measured against the baseline.</span></div></div>
-    </div>
-    <div class="gate"><strong>The go/no-go is fixed in advance.</strong> Five pass/fail checks print on every weekly shadow report from week one: data is complete, forecasts beat the par sheet, forecast ranges are honest, projected waste saving is at least 15% with no rise in sellouts, and the big-dollar items are covered. If any check fails, we stop at week 6 and nothing in the kitchen has changed.</div>
-    <p><strong>Success in the live phase:</strong> at least a 10% cut in prepared-food waste dollars versus the baseline, with no material drop in on-shelf availability.</p>
-  </section>
-
-  <section>
-    <h2>What I am asking for</h2>
-    <div class="asks">
-      <div><b>Written permission</b><span>Read-only access to daily sales for the pilot items at this store, for the pilot only. Nothing to date has touched company data.</span></div>
-      <div><b>A production count</b><span>Any record of how much we put out each day. A photographed clipboard is enough. Without it there is no waste baseline and no savings number, so this is the most important ask.</span></div>
-      <div><b>Four numbers per item</b><span>Retail price, cost, batch size (one tray, one bake), and shelf life. The department already knows these.</span></div>
-      <div><b>40–80 paid hours</b><span>Off-floor time to connect the export, run shadow mode, and operate the pilot.</span></div>
-      <div><b>Recognition in writing</b><span>An agreed structure tied to the measured result, settled before the live phase begins.</span></div>
-    </div>
-  </section>
-
-  <section>
     <h2>What could go wrong</h2>
     <ul>
-      <li><strong>Forecasts don't transfer from simulation to this store.</strong> Shadow mode is the gate. Four weeks of scored predictions before production changes.</li>
-      <li><strong>Customers find empty cases.</strong> The pilot runs at the availability-held setting. Sellouts are tracked daily and any item can go back to its par instantly.</li>
-      <li><strong>The kitchen doesn't trust the sheet.</strong> Overrides are a feature, logged rather than fought. The pilot measures how it would really run.</li>
-      <li><strong>The first real export breaks the importer.</strong> Likely. The import step refuses bad data and names the problem rather than training on it. Budget the first week of shadow mode for this.</li>
+      <li><strong>The forecast may be worse on real data than in the simulation.</strong> That is what weeks 3 to 6 are for. Nothing changes in the kitchen until it has proved itself.</li>
+      <li><strong>The shelves could run short.</strong> The pilot uses the setting that keeps availability where it is today, and any item can go back to its par the same day.</li>
+      <li><strong>The first real sales file will probably need cleanup.</strong> The import step refuses bad data and says what is wrong. I have budgeted the first week of the watch phase for this.</li>
     </ul>
-    <div class="caveat"><strong>Two honest limits.</strong> Items that keep for several days (bread, cake) are printed as a check-what's-left reminder, not a make quantity; the model doesn't yet forecast them usefully. And weekly ad items aren't modelled, so on a heavy ad week the forecast for those items will be noisier.</div>
+    <div class="box amber"><strong>Two things it does not handle yet.</strong> Items that keep for several days, like bread and cake, get a reminder on the sheet rather than a quantity. And weekly ad items will forecast worse than the rest. Both are stated in the plan rather than hidden.</div>
   </section>
 
   <section>
-    <h2>If it works</h2>
-    <p>At a conservative 10–15% against a measured baseline of <span class="fill">[$ baseline]</span> per year, the pilot pays back its hours in the first weeks of live operation. The same model serves every item, so it scales from one store to a district of <span class="fill">[≈20]</span> stores without redesign. At district scale, simulation-grade performance would be worth six figures a year. The pilot is how we replace "would be" with a measured fact.</p>
+    <h2>The payoff</h2>
+    <p>At 10 to 15 percent of a baseline of <span class="fill">[$ baseline]</span> per year, the pilot pays for its hours in the first weeks of live use. The same model works for every item and every store, so a district of <span class="fill">[≈20]</span> stores is where the real money is. The pilot turns that from an estimate into a measured number.</p>
   </section>
-
-  <footer>Method, in one line: a demand model reads each item's recent sales, the calendar, and the weather forecast, predicts tomorrow's demand as a range, and a cost rule picks the quantity where one more unit wasted costs the same as one more sale missed. Full detail, reproducible results, and the day-one checklist are in the project repository.</footer>
 
 </div>
