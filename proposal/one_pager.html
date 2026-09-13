@@ -49,7 +49,7 @@
     padding-inline: 20px;
     padding-block: 40px 64px;
   }
-  .page { max-width: 680px; margin: 0 auto; display: grid; gap: 40px; }
+  .page { max-width: 700px; margin: 0 auto; display: grid; gap: 40px; }
 
   h1, h2 {
     font-family: "Archivo", "Helvetica Neue", Arial, sans-serif;
@@ -59,8 +59,8 @@
   }
   h1 { font-size: 2rem; font-weight: 800; font-stretch: 125%; letter-spacing: -0.01em; }
   h2 { font-size: 1.1rem; font-weight: 700; }
-  p { margin: 0; max-width: 60ch; }
-  strong { font-weight: 600; }
+  p { margin: 0; max-width: 62ch; }
+  p + p { margin-top: 0.7em; }
 
   .eyebrow {
     font-size: 0.72rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
@@ -69,24 +69,21 @@
   .fill { border-bottom: 1.5px dashed var(--amber); color: var(--amber); padding-inline: 2px; }
 
   header { display: grid; gap: 14px; }
-  .lede { font-size: 1.2rem; line-height: 1.45; max-width: 52ch; }
+  .lede { font-size: 1.15rem; line-height: 1.45; max-width: 56ch; }
   .meta { font-size: 0.9rem; color: var(--ink-2); }
 
   section { display: grid; gap: 14px; }
 
-  ul, ol { margin: 0; padding-left: 1.2em; display: grid; gap: 10px; max-width: 60ch; }
+  ul { margin: 0; padding-left: 1.2em; display: grid; gap: 10px; max-width: 62ch; }
   li::marker { color: var(--muted); }
 
-  .ask { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--green); padding: 20px 22px; display: grid; gap: 12px; }
-  .ask h2 { color: var(--green); }
-  .ask ol { gap: 8px; }
-
-  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  .tile { background: var(--surface); border: 1px solid var(--line); padding: 14px 16px; display: grid; gap: 6px; }
-  .tile .n { font-family: "Archivo", sans-serif; font-weight: 800; font-stretch: 125%; font-size: 2rem; line-height: 1; color: var(--green); font-variant-numeric: tabular-nums; }
-  .tile .l { font-size: 0.88rem; color: var(--ink-2); line-height: 1.35; }
-  @media (max-width: 560px) { .tiles { grid-template-columns: 1fr; } }
-  .note { font-size: 0.9rem; color: var(--muted); max-width: 62ch; }
+  /* the asks: label | explanation */
+  .asks { display: grid; border-top: 3px solid var(--green); }
+  .asks > div { display: grid; grid-template-columns: 170px 1fr; gap: 18px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .asks .k { font-weight: 600; line-height: 1.35; }
+  .asks .k small { display: block; font-weight: 400; font-size: 0.82rem; color: var(--muted); margin-top: 2px; }
+  .asks p { color: var(--ink-2); font-size: 0.97rem; }
+  @media (max-width: 560px) { .asks > div { grid-template-columns: 1fr; gap: 6px; } }
 
   .plan { display: grid; }
   .plan div { display: grid; grid-template-columns: 100px 1fr; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
@@ -111,6 +108,8 @@
 
   .box { border-left: 3px solid var(--green); background: var(--green-soft); padding: 12px 16px; max-width: 62ch; }
   .box.amber { border-color: var(--amber); background: var(--amber-soft); }
+
+  .sign { border-top: 1px solid var(--line); padding-top: 16px; color: var(--ink-2); }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
@@ -118,60 +117,79 @@
 
   <header>
     <div class="eyebrow">Proposal · Prepared foods · Store <span class="fill">[#]</span></div>
-    <h1>A 90-day pilot to cut prepared-food waste</h1>
-    <p class="lede">I have built a tool that tells the kitchen how much to make each morning, based on what actually sold on days like tomorrow. I am asking to test it at this store for 90 days. If it works, we throw away less food without leaving the case empty.</p>
+    <h1>A 90-day pilot to reduce prepared-food waste</h1>
+    <p class="lede">I have built a tool that works out how much of each item the kitchen should make, based on what sold on similar days in the past. I would like to test it at this store over 90 days, with a fixed stopping point if it does not perform. This page sets out what I am asking for, why I think each request is reasonable, and what the store gets in return.</p>
     <p class="meta"><span class="fill">[Your name, role]</span> · September 2026</p>
   </header>
 
-  <section class="ask">
-    <h2>What I need from you</h2>
-    <ol>
-      <li><strong>Permission, in writing,</strong> to use this store's daily sales for the pilot items. Read-only, and only for the pilot.</li>
-      <li><strong>A daily count of what we put out</strong> for those items. A photo of a clipboard is enough. Without this we cannot measure waste, so nothing else works.</li>
-      <li><strong>About 40 to 80 hours of off-floor time</strong> spread over the 90 days.</li>
-      <li><strong>Agreement now on what counts as success,</strong> and on recognition if we get there.</li>
-    </ol>
-  </section>
-
   <section>
     <h2>The problem</h2>
-    <p>The par sheet sets a fixed quantity for each item. It cannot see that tomorrow is rainy, or a payday, or the day before a holiday. So we make too much on slow days and sell out on busy ones. Industry figures put prepared-food waste at 15 to 25 percent of everything we make.</p>
+    <p>A par sheet fixes a quantity for each item and leaves it there. It cannot account for weather, paydays or the run-up to a holiday, so we make too much on quiet days and run out on busy ones. Industry estimates put prepared-food waste at 15 to 25 percent of production. We do not know our own figure. The first two weeks of this pilot would establish it.</p>
   </section>
 
   <section>
-    <h2>What already exists</h2>
-    <ul>
-      <li><strong>A phone app that logs what gets thrown out.</strong> Two weeks of use gives this store's real waste figure in dollars per year.</li>
-      <li><strong>A forecasting model</strong> that turns sales history, the calendar and the weather into a morning make-list. It was built and tested on a simulated store, so no company data has been used.</li>
-      <li><strong>The connection to a real sales export.</strong> It is written and tested against a mock file. It has never run on real data, because I have not asked yet. This document is the ask.</li>
-    </ul>
-  </section>
-
-  <section>
-    <h2>What the test showed</h2>
-    <p>Over one full simulated year, compared with a well-run par sheet:</p>
-    <div class="tiles">
-      <div class="tile"><span class="n">−37%</span><span class="l">waste, with the shelves kept as full as they are today</span></div>
-      <div class="tile"><span class="n">−60%</span><span class="l">waste, if we accept slightly more sellouts</span></div>
-      <div class="tile"><span class="n">13%</span><span class="l">forecast error, against 15.5% for a simple trailing average</span></div>
+    <h2>What I am asking for</h2>
+    <div class="asks">
+      <div>
+        <div class="k">Sales history<small>at least two years</small></div>
+        <p>Daily sales by item for the pilot products, roughly five to ten of them, going back at least two years and three if the records exist. The tool learns from repeated seasons, so it needs to have seen every holiday and every month more than once. This is the movement report the store already produces, exported once and read-only. I would not need access to any live system.</p>
+      </div>
+      <div>
+        <div class="k">A daily production count<small>the one I cannot do without</small></div>
+        <p>How many of each pilot item we put out each day. If a record already exists, a copy of it. If not, a photo of a clipboard each morning is enough. Waste is what we made minus what we sold, so without this number there is no baseline and no way to show a result.</p>
+      </div>
+      <div>
+        <div class="k">A few facts per item</div>
+        <p>Retail price, cost, batch size (one tray, one bake) and shelf life. The department already knows these. I would also need store hours, any closures in the period, and the time of day the sales day closes in the system.</p>
+      </div>
+      <div>
+        <div class="k">Off-floor time<small>40 to 80 hours over 90 days</small></div>
+        <p>Most of it falls in the first six weeks, for connecting and checking the data and then running the daily sheet. Averaged out, it is about one shift a week.</p>
+      </div>
+      <div>
+        <div class="k">Two things in writing<small>before any company data is used</small></div>
+        <p>Permission for read-only access to the items above, limited to this store and the pilot period. And a short agreement on ownership. I built the tool on my own time and it has never touched company data. I would like that on record, and I would like the company's rights to the pilot results to be equally clear, so that neither side is surprised later.</p>
+      </div>
+      <div>
+        <div class="k">A definition of success</div>
+        <p>Agreed now, not after the fact. My proposal is below. If the pilot meets it, I am asking for recognition tied to the measured result and a conversation about taking the tool to other stores.</p>
+      </div>
     </div>
-    <p class="note">Simulated store, simulated dollars. They show the method works. This store's real number comes from the pilot, and I am promising 10 to 15 percent, not 37.</p>
+  </section>
+
+  <section>
+    <h2>What the store gets back</h2>
+    <ul>
+      <li>By the end of week two, this store's actual prepared-food waste in dollars per year. That is a measured figure rather than an estimate, and it is useful on its own whatever happens next.</li>
+      <li>By the end of week six, a report on how accurate the forecasts were against real sales, produced before anything in the kitchen has changed.</li>
+      <li>By the end of week thirteen, a measured before-and-after on waste and sellouts.</li>
+    </ul>
+    <p>Kitchen operations do not change until week seven, and the manager can override any line on the sheet on any day.</p>
+  </section>
+
+  <section>
+    <h2>What has already been done</h2>
+    <ul>
+      <li>A phone app for logging what gets thrown away. It is ready to use today.</li>
+      <li>A forecasting model, built and tested on a simulated store because I did not have company data and did not want to use any without permission. Over a full simulated year it cut waste by 37 percent with the shelves kept as full as they are today, and by 60 percent if we accepted a few more sellouts. Those are simulated figures. They show the approach works, not what this store will save, which is why I am committing to 10 to 15 percent for the pilot.</li>
+      <li>The step that reads a store's sales export. It is written and has been tested on a mock file seeded with the kinds of problems real exports have. It has not yet been run on real data.</li>
+    </ul>
   </section>
 
   <section>
     <h2>How the pilot runs</h2>
     <div class="plan">
-      <div><span class="w">Weeks 1–2</span><p><b>Measure.</b> Staff log waste with the app. Result: our real baseline, in dollars per year.</p></div>
-      <div><span class="w">Weeks 3–6</span><p><b>Watch.</b> The model prints a make-list every morning. The kitchen ignores it. We score its predictions against real sales.</p></div>
-      <div><span class="w">Weeks 7–13</span><p><b>Follow.</b> The kitchen uses the list. The manager can override any line. We measure waste against the baseline.</p></div>
+      <div><span class="w">Weeks 1–2</span><p><b>Measure.</b> Staff log waste with the app. This produces the baseline.</p></div>
+      <div><span class="w">Weeks 3–6</span><p><b>Watch.</b> The tool prints a make-list every morning and the kitchen ignores it. Each day's forecast is scored against what actually sold.</p></div>
+      <div><span class="w">Weeks 7–13</span><p><b>Follow.</b> The kitchen uses the list. Waste and sellouts are measured against the baseline.</p></div>
     </div>
-    <div class="box"><strong>The off-ramp.</strong> Before the kitchen changes anything, the model has to pass five checks we agree on now. If it fails any of them, we stop at week 6 and nothing on the floor has changed.</div>
-    <p><strong>Success means</strong> waste dollars down at least 10 percent against the baseline, with no real drop in what is on the shelf.</p>
+    <div class="box">Before week seven, the forecasts have to pass five tests we agree on now, covering data quality, accuracy against the par sheet, and projected savings. If they fail any one of them, the pilot stops at week six and nothing on the floor has changed.</div>
+    <p>I propose that success means waste dollars down at least 10 percent from the baseline, with no meaningful drop in what is on the shelf.</p>
   </section>
 
   <section>
     <h2>What the kitchen sees</h2>
-    <p>One printed sheet a day. No new screens and no new system.</p>
+    <p>One printed sheet each morning. There is no new screen and no new system to learn.</p>
     <div class="sheet"><b>MORNING SHEET   Tue 2026-03-03   Store 0123          rain, high 44F</b>
 <b>ITEM                MAKE   BATCH   NOTE</b>
 Pizza slice           42      6     Rain: expect a slower lunch
@@ -186,16 +204,17 @@ Bread loaf            30     10     3-day shelf life: one day's demand</div>
   <section>
     <h2>What could go wrong</h2>
     <ul>
-      <li><strong>The forecast may be worse on real data than in the simulation.</strong> That is what weeks 3 to 6 are for. Nothing changes in the kitchen until it has proved itself.</li>
-      <li><strong>The shelves could run short.</strong> The pilot uses the setting that keeps availability where it is today, and any item can go back to its par the same day.</li>
-      <li><strong>The first real sales file will probably need cleanup.</strong> The import step refuses bad data and says what is wrong. I have budgeted the first week of the watch phase for this.</li>
+      <li>The forecasts may be less accurate on real data than they were in simulation. Weeks three to six exist to find that out before it costs anything.</li>
+      <li>The shelves could run short. The pilot uses the setting that keeps availability where it is today, and any item can go back to its par the same day.</li>
+      <li>The first real sales file will probably need some cleanup. The import step rejects bad data and says what is wrong with it. I have set aside the first week of the watch phase for this.</li>
     </ul>
-    <div class="box amber"><strong>Two things it does not handle yet.</strong> Items that keep for several days, like bread and cake, get a reminder on the sheet rather than a quantity. And weekly ad items will forecast worse than the rest. Both are stated in the plan rather than hidden.</div>
+    <div class="box amber">Two limits I want to be upfront about. Items that keep for several days, like bread and cake, get a reminder on the sheet rather than a make quantity. And items on a weekly ad will forecast less well than the rest, because the tool does not see the ad schedule.</div>
   </section>
 
   <section>
-    <h2>The payoff</h2>
-    <p>At 10 to 15 percent of a baseline of <span class="fill">[$ baseline]</span> per year, the pilot pays for its hours in the first weeks of live use. The same model works for every item and every store, so a district of <span class="fill">[≈20]</span> stores is where the real money is. The pilot turns that from an estimate into a measured number.</p>
+    <h2>The return</h2>
+    <p>At 10 to 15 percent of a baseline of <span class="fill">[$ baseline]</span> a year, the pilot pays for its hours within the first weeks of live use. The same tool works for any item at any store, so a district of <span class="fill">[≈20]</span> stores is where the return becomes significant. I would rather show you a measured result from one store than an estimate for twenty.</p>
+    <p class="sign">I am happy to walk through any of this in person, and to adjust the pilot items or the timeline to suit the store.</p>
   </section>
 
 </div>
