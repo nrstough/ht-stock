@@ -94,6 +94,17 @@ Published artifacts (same content as the files):
   the fee arithmetic and the logging burden on the department; see the open discussion.
 - Production sheet: filled in by the department managers or by Nathan, depending on what the
   managers he talks to prefer.
+- Scope, resolved in principle: deli, bakery, sub shop and pizza are all one department at
+  his store, so "ten per department" and "ten items" are the same thing. He says it is hard
+  to name ten separate barcoded items because the department does not make that many. So
+  the pilot can plausibly cover everything the department makes in house, and the scored set
+  is whichever of those have barcodes. Not yet worded into the brief.
+- Likely highest-dollar waste items, his guess, unconfirmed: baked goods, fried chicken
+  (bucket), pizza for sure. Fresh slice (pizza by the slice) suggested as a good demo item.
+  Store records can give more accurate waste numbers if drilled down.
+- HR portal: Nathan asked Claude to check it from his computer. Not possible from a cloud
+  session, and not something to do on his behalf in any case. He needs to pull his new-hire
+  packet himself or ask HR for a copy.
 - Target date: in front of the manager roughly two weeks out, so around 2026-09-28. That
   makes the hiring-paperwork check and the baseline question urgent.
 
