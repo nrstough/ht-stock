@@ -15,7 +15,8 @@ touched. All work is on branch `claude/vigilant-goldberg-5ur0lo`, pushed.
   English, no architecture talk. Asks: two-plus years of item-level sales history, a daily
   production count, price/cost/batch/shelf life per item, about 80 paid hours at $30/hr
   (~$2,400, with a one-time-payment fallback if payroll cannot run a project rate), a
-  signed one-page ownership note (tool stays his, store keeps results), and if the pilot
+  formal written agreement on access, ownership and payment (tool stays his, store keeps
+  results), and if the pilot
   passes, a completion bonus plus the manager carrying the result to district. Ten
   highest-dollar items. Byline filled in. Placeholders left: store number, `[$ baseline]`,
   `[≈20]` stores.
@@ -39,7 +40,9 @@ Published artifacts (same content as the files):
 - Wants to be paid properly; said $30/hr feels fair. Then said the proposal has too many
   if/then options and a menu invites the cheapest choice. **He wants one firm structure and
   a solid written agreement.** Nothing final chosen yet.
-- No lawyer. A plain-English one-to-two-page agreement, drafted by Claude, is the plan.
+- No lawyer. The agreement is a **formal contract** in strict legal language: recitals,
+  defined terms, numbered sections, specific and hard to pick apart, NC governing law.
+  Drafted together, clause by clause; Nathan approves every line.
 - No architecture or jargon in anything the manager sees. Keep it that way.
 - Wants the proposal to be more convincing and straightforward, probably slides or a
   shorter HTML page. Not built yet; waiting on his answers.
@@ -57,9 +60,9 @@ meeting.
 
 1. Nathan reads his hiring paperwork for an inventions/IP clause. Everything depends on it.
 2. Nathan answers the Part 2 questions (any order, short answers fine).
-3. Draft the agreement from those answers.
-4. Build the short deck or page for the meeting; the brief becomes the leave-behind.
-5. Cut the data contract to one page for whoever runs the item movement report.
+3. Draft the formal agreement together from those answers.
+4. Build the short deck or page together for the meeting; the brief becomes the leave-behind.
+5. Cut the data contract to one page together for whoever runs the item movement report.
 6. Nathan runs the waste logger (`index.html`) for two weeks to replace `[$ baseline]`.
 7. Quiz Nathan on Part 3 until he can answer without looking.
 8. Produce PDFs of the brief and the agreement.
@@ -77,6 +80,11 @@ meeting.
 - Known limits: multi-day items (bread, cake) get a reminder not a quantity; ads/markdowns
   not modeled; no production count means no waste baseline and G4 pending forever.
 - Nathan's current wage never appears in any document. Only the $30 figure does.
+
+## Working rule
+
+Nothing is Claude's to decide or finish alone. Every document is drafted together and Nathan
+approves every line before it leaves his hands.
 
 ## Style rules that held up
 
