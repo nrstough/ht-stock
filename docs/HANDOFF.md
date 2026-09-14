@@ -122,6 +122,14 @@ Published artifacts (same content as the files):
   measure phase has to test recording completeness, not just produce a dollar figure, and
   the data-quality gate should include a completeness check on the pilot items. This needs
   to be said out loud to the manager rather than discovered in week eight.
+- Sub bread: a giant lump is dumped every night and none of it is recorded. This is the
+  clearest single opportunity in the department and the records cannot see any of it. It is
+  daily, predictable and baked to a schedule, which is the exact shape the tool handles
+  best, and because it is dumped nightly rather than held it is a one-day item, not one of
+  the multi-day items the tool only gives a reminder for. It is also the one waste stream a
+  manager can see with their own eyes. Two consequences: the two-week logger run should
+  cover sub bread first, and sub bread is probably the demo item for the meeting rather
+  than fresh slice.
 - Nathan asked Claude to log into his HR portal through his browser. Not possible from this
   session and not appropriate in any case. He pulls the packet himself.
 - HR portal: Nathan asked Claude to check it from his computer. Not possible from a cloud
