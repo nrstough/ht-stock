@@ -84,7 +84,18 @@ Published artifacts (same content as the files):
   instead of a special payroll rate. Payment clause can be written as a vendor invoice.
 - Format: slides only if he gets a room, which he thinks unlikely. Expects the manager to read
   on a phone. Wants a document, and is fine with both.
-- The "15 to 25 percent" question was not understood; explain it before asking again.
+- Approved on the same day, and applied to the brief: a flat $4,000 project fee, half at
+  signing and half at the end regardless of result, invoiced through a small business; and
+  the removal of the "15 to 25 percent" industry claim in favor of "we do not know exactly
+  what that costs this store today." The $30 figure is gone from the brief. No hourly rate
+  appears in it now, on purpose, so the fee does not invite an hourly counter.
+- Scope: Nathan thinks ten items at one store is too small to be a real proof of concept and
+  wants at least ten items per department. Not yet applied anywhere. It changes the hours,
+  the fee arithmetic and the logging burden on the department; see the open discussion.
+- Production sheet: filled in by the department managers or by Nathan, depending on what the
+  managers he talks to prefer.
+- Target date: in front of the manager roughly two weeks out, so around 2026-09-28. That
+  makes the hiring-paperwork check and the baseline question urgent.
 
 ## Recommendation on the table (not yet accepted)
 
@@ -101,7 +112,9 @@ meeting.
 4. Build the short deck or page together for the meeting; the brief becomes the leave-behind.
 5. Cut the data contract to one page together for whoever runs the item movement report.
 6. Nathan runs the waste logger (`index.html`) for two weeks to replace `[$ baseline]`.
-6a. Nathan decides how to reword the brief's "15 to 25 percent" sentence (see facts below).
+6a. Done: the "15 to 25 percent" sentence is out of the brief.
+6b. Settle the scope question (ten items total, or ten per department) before the agreement
+    is drafted, because the fee and the hours follow from it.
 7. Quiz Nathan on Part 3 until he can answer without looking.
 8. Produce PDFs of the brief and the agreement.
 
@@ -122,7 +135,8 @@ meeting.
   production. `docs/PRODUCTION_PLAN.md` flags that line as unsourced and cites published
   figures that are lower (bakery shrink 8.5% and deli 8.7% in FMI 2018; prepared foods 8.38%
   unsold in the 2022 ReFED / Pacific Coast Food Waste Commitment report). The brief has not
-  been changed, because Nathan approves every line. It should be, before the meeting.
+  been changed at first because Nathan approves every line; he approved the change on
+  2026-09-14 and the sentence is gone.
 - Every dollar figure in the pitch descends from a hand-tuned scale constant in the simulator
   (`BASE_SCALE` in `sim/params.py`). The percentages hold; the dollars are illustrative until
   the logged baseline replaces them. Say so if asked.
