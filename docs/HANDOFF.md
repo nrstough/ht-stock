@@ -1,13 +1,18 @@
 # Handoff: Fresh Forecast pilot proposal
 
-Written 2026-09-14 at the end of a working session. Read this first in a new chat.
+Written 2026-09-14 at the end of a working session, updated the same day when the pitch branch
+was merged with `main`. Read this first in a new chat.
 
 ## Who and what
 
 Nathan Stough, Harris Teeter associate, built this repo on his own time with no company
 data. It is a prepared-food waste forecasting tool. He wants to pitch a paid 90-day pilot at
 his store. He has **not yet been given the okay to present**, and no company data has been
-touched. All work is on branch `claude/vigilant-goldberg-5ur0lo`, pushed.
+touched. All work is on branch `claude/handoff-docs-uhugi8`, pushed. That branch carries
+everything from `claude/vigilant-goldberg-5ur0lo` (the brief, the workbook, this note) merged
+with `main`, which had meanwhile gained a leadership deck, an executive proposal, print PDFs
+and a production plan. The two lines touched only the README in common and the merge kept both
+descriptions.
 
 ## What exists in the repo (as of this session)
 
@@ -24,8 +29,20 @@ touched. All work is on branch `claude/vigilant-goldberg-5ur0lo`, pushed.
   before it goes anywhere. Part 2: thirty-six questions for Nathan, unanswered. Part 3:
   plain-language study guide to the pipeline, model, decision rule, gates, simulated store,
   likely Q&A, glossary.
+- `proposal/deck.html`, `proposal/Fresh-Forecast-Leadership-Deck.pptx` and `.pdf` — a
+  seventeen-slide deck for district and division leadership, generated from the frozen backtest
+  by `tools/build_deck.py` and `tools/build_deck_pptx.js`. Written for a room above the store
+  manager, so it talks architecture and scale; it is not the manager-meeting deck the open items
+  below call for, though it is raw material for one. Placeholders for name, role and store.
+- `proposal/executive-proposal.html` and `Fresh-Forecast-Executive-Proposal.pdf` — the
+  four-page memo that goes with the deck. Same audience, same caveats.
+- `proposal/README.md` — which pitch file is for whom and how to regenerate the generated ones.
 - `proposal/proposal.html`, `poc/dashboard.html` — older, longer, pre-existing pitch and
   dashboard. Still accurate on numbers, but predate the real-data layer.
+- `docs/PRODUCTION_PLAN.md` — one status page over everything: what is built, what is not,
+  what blocks what, with a four-item critical path. Read it before promising anything new.
+  It records that CI cannot be installed from a Claude session (GitHub refuses workflow files
+  from the app), so the 360 tests only run when a human runs them.
 - Everything else is the code: `sim/` (synthetic store), `model/` (quantile GRU +
   newsvendor + backtest + shadow mode), `ht/` (ingest/validate/config/weather/calendar for
   real exports), `docs/DATA_CONTRACT.md`, `docs/REAL_DATA_READINESS.md`.
@@ -64,6 +81,7 @@ meeting.
 4. Build the short deck or page together for the meeting; the brief becomes the leave-behind.
 5. Cut the data contract to one page together for whoever runs the item movement report.
 6. Nathan runs the waste logger (`index.html`) for two weeks to replace `[$ baseline]`.
+6a. Nathan decides how to reword the brief's "15 to 25 percent" sentence (see facts below).
 7. Quiz Nathan on Part 3 until he can answer without looking.
 8. Produce PDFs of the brief and the agreement.
 
@@ -80,6 +98,14 @@ meeting.
 - Known limits: multi-day items (bread, cake) get a reminder not a quantity; ads/markdowns
   not modeled; no production count means no waste baseline and G4 pending forever.
 - Nathan's current wage never appears in any document. Only the $30 figure does.
+- The manager brief says industry estimates put prepared-food waste at 15 to 25 percent of
+  production. `docs/PRODUCTION_PLAN.md` flags that line as unsourced and cites published
+  figures that are lower (bakery shrink 8.5% and deli 8.7% in FMI 2018; prepared foods 8.38%
+  unsold in the 2022 ReFED / Pacific Coast Food Waste Commitment report). The brief has not
+  been changed, because Nathan approves every line. It should be, before the meeting.
+- Every dollar figure in the pitch descends from a hand-tuned scale constant in the simulator
+  (`BASE_SCALE` in `sim/params.py`). The percentages hold; the dollars are illustrative until
+  the logged baseline replaces them. Say so if asked.
 
 ## Working rule
 
