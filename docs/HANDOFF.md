@@ -99,9 +99,20 @@ Published artifacts (same content as the files):
   to name ten separate barcoded items because the department does not make that many. So
   the pilot can plausibly cover everything the department makes in house, and the scored set
   is whichever of those have barcodes. Not yet worded into the brief.
-- Likely highest-dollar waste items, his guess, unconfirmed: baked goods, fried chicken
-  (bucket), pizza for sure. Fresh slice (pizza by the slice) suggested as a good demo item.
-  Store records can give more accurate waste numbers if drilled down.
+- Store number is 298. Filled into the brief.
+- Scale, from Nathan on 2026-09-14: the department makes about 50 items in house and puts
+  out roughly another 100 that it does not make. The pilot should cover the 50 made in
+  house; the 100 put-out items are ordering, not production, and stay out of scope. Named
+  in-house items so far: fried chicken in several forms, rotisserie chicken in several
+  sizes, ribs, pasta salads, chicken salads, cookies and other baked goods, pizza, subs.
+- What actually gets thrown away most, from Nathan, all barcoded: grilled bites, popcorn
+  chicken, fried four piece, baked eight piece, fried legs, fried bucket, rotisserie
+  chicken. More rarely a fresh slice or a chub of meat. Waste is concentrated in hot foods
+  and chicken, and the heavy items are barcoded, which means the store's own records can
+  supply most of the baseline. The unbarcoded lump (donuts, pizza, leftover sub bread)
+  matters less than first assumed.
+- Nathan asked Claude to log into his HR portal through his browser. Not possible from this
+  session and not appropriate in any case. He pulls the packet himself.
 - HR portal: Nathan asked Claude to check it from his computer. Not possible from a cloud
   session, and not something to do on his behalf in any case. He needs to pull his new-hire
   packet himself or ask HR for a copy.
