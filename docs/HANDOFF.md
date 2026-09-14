@@ -66,6 +66,26 @@ Published artifacts (same content as the files):
 - Wants to understand the tool and the simulated data well enough to answer questions
   himself. Part 3 of the workbook is for that; a quiz session was offered.
 
+## Answers Nathan gave on 2026-09-14 (first batch of Part 2)
+
+- Hiring paperwork: does not know what he signed. Still has to find it or get a copy from HR.
+  Open item 1 stays open.
+- Money: for the pilot he would accept the equivalent of $50 an hour, so about $4,000. He
+  would do it for $2,000 to $2,500. A floor was mentioned but not clearly; confirm it.
+  The brief still says $30 an hour, about 80 hours, roughly $2,400, with a one-time-payment
+  fallback. That wording is now out of date and should become one flat number.
+- Production sheet: exists and is reasonably well followed, not perfectly. So the pilot can
+  measure production.
+- Waste logging: cataloged very well for anything with a barcode. Donuts, pizza and leftover
+  sub bread are not accounted for at all; they are thrown away in a lump. So barcoded items
+  already have a waste baseline in the store's own records, and the unbarcoded ones need the
+  logger or need to be left out of the ten.
+- Employment: hourly. Willing to set up a small company so the store can pay an invoice
+  instead of a special payroll rate. Payment clause can be written as a vendor invoice.
+- Format: slides only if he gets a room, which he thinks unlikely. Expects the manager to read
+  on a phone. Wants a document, and is fine with both.
+- The "15 to 25 percent" question was not understood; explain it before asking again.
+
 ## Recommendation on the table (not yet accepted)
 
 Flat project fee for the 90 days, in the $2,500 to $4,000 range, half at signing, half at
