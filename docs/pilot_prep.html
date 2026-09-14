@@ -1,0 +1,339 @@
+<title>Fresh Forecast Pilot Workbook</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100,500;100,700;125,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #F6F7F4; --surface: #FFFFFF; --ink: #1A221E; --ink-2: #4B554F; --muted: #7A847D;
+    --line: #D9DED9; --green: #1E6A48; --green-soft: #E3F0E8; --amber: #A8660F; --amber-soft: #F8EBD6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #131916; --surface: #1B231F; --ink: #E9EDE9; --ink-2: #B5BEB7; --muted: #82897F;
+      --line: #2E3833; --green: #6CC497; --green-soft: #1E3128; --amber: #E4A552; --amber-soft: #3A2C16;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #131916; --surface: #1B231F; --ink: #E9EDE9; --ink-2: #B5BEB7; --muted: #82897F;
+    --line: #2E3833; --green: #6CC497; --green-soft: #1E3128; --amber: #E4A552; --amber-soft: #3A2C16;
+  }
+  body { background: var(--bg); color: var(--ink); font-family: "IBM Plex Sans", "Segoe UI", Helvetica, Arial, sans-serif; font-size: 16.5px; line-height: 1.55; padding-inline: 20px; padding-block: 40px 80px; }
+  .page { max-width: 760px; margin: 0 auto; display: grid; gap: 48px; }
+  h1, h2, h3 { font-family: "Archivo", "Helvetica Neue", Arial, sans-serif; margin: 0; text-wrap: balance; line-height: 1.15; }
+  h1 { font-size: 2rem; font-weight: 800; font-stretch: 125%; letter-spacing: -0.01em; }
+  h2 { font-size: 1.35rem; font-weight: 800; font-stretch: 125%; }
+  h3 { font-size: 1.05rem; font-weight: 700; margin-top: 8px; }
+  p { margin: 0; max-width: 64ch; }
+  p + p { margin-top: 0.7em; }
+  .eyebrow { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  header { display: grid; gap: 14px; }
+  .lede { font-size: 1.1rem; max-width: 58ch; }
+  nav { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 0.9rem; }
+  nav a { color: var(--green); text-decoration: none; border-bottom: 1px solid var(--line); }
+  nav a:focus-visible, a:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+  section { display: grid; gap: 16px; }
+  .part { border-top: 3px solid var(--green); padding-top: 16px; }
+  ul, ol { margin: 0; padding-left: 1.25em; display: grid; gap: 8px; max-width: 64ch; }
+  li::marker { color: var(--muted); }
+  ol.q { counter-reset: none; gap: 12px; }
+  ol.q li { padding-left: 4px; }
+  ol.q li small { display: block; color: var(--muted); font-size: 0.88rem; }
+  .need { display: grid; grid-template-columns: 34px 1fr; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .need .n { font-family: "Archivo", sans-serif; font-weight: 800; font-stretch: 125%; color: var(--green); font-size: 1.2rem; padding-top: 2px; font-variant-numeric: tabular-nums; }
+  .need b { font-weight: 600; display: block; }
+  .need p { color: var(--ink-2); font-size: 0.96rem; }
+  .need .who { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+  .tw { overflow-x: auto; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  td.num, th.num { text-align: right; }
+  .box { border-left: 3px solid var(--green); background: var(--green-soft); padding: 12px 16px; max-width: 64ch; }
+  .box.amber { border-color: var(--amber); background: var(--amber-soft); }
+  .mono { font-family: "IBM Plex Mono", "Menlo", monospace; font-size: 0.85rem; }
+  .flow { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+  .flow div { background: var(--surface); border: 1px solid var(--line); padding: 10px; font-size: 0.82rem; line-height: 1.3; }
+  .flow div b { display: block; font-weight: 600; color: var(--green); margin-bottom: 3px; }
+  @media (max-width: 640px) { .flow { grid-template-columns: repeat(2, 1fr); } }
+  dl { margin: 0; display: grid; grid-template-columns: 170px 1fr; gap: 8px 16px; max-width: 64ch; font-size: 0.95rem; }
+  dt { font-weight: 600; }
+  dd { margin: 0; color: var(--ink-2); }
+  @media (max-width: 520px) { dl { grid-template-columns: 1fr; gap: 2px 0; } dd { margin-bottom: 8px; } }
+  .qa { display: grid; gap: 14px; }
+  .qa div { border-left: 2px solid var(--line); padding-left: 14px; }
+  .qa b { display: block; font-weight: 600; }
+  .qa p { color: var(--ink-2); font-size: 0.96rem; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="page">
+
+<header>
+  <div class="eyebrow">Working document · for Nathan only · September 2026</div>
+  <h1>Everything the pilot needs before it goes anywhere</h1>
+  <p class="lede">Three parts. What has to exist before you present, in order. The questions only you can answer, which decide what the proposal and the agreement say. And a plain explanation of how the tool and the simulated store work, thorough enough that you can take questions on it without help.</p>
+  <nav>
+    <a href="#needs">Part 1: what we need</a>
+    <a href="#questions">Part 2: questions for you</a>
+    <a href="#how">Part 3: how it works</a>
+    <a href="#sim">The simulated store</a>
+    <a href="#qa">Likely questions and answers</a>
+  </nav>
+</header>
+
+<!-- ============================================================ PART 1 -->
+<section id="needs" class="part">
+  <h2>Part 1. What we need, in order</h2>
+  <p>Sixteen items. The first four are decisions and checks that cost nothing and change everything after them. The rest are things to build or gather. "Who" says whether it is yours to do, mine to draft, or something we do together.</p>
+
+  <div>
+    <div class="need"><span class="n">1</span><div><b>Your employment paperwork, read once for an inventions clause</b><p>Search everything you signed at hiring for "inventions," "intellectual property," "work product," or "developments." If a clause assigns anything related to the employer's business to the company, the line "the tool stays mine" is not safe to say and the whole negotiation changes shape. If there is no such clause, you are on solid ground. This is a twenty-minute job and it comes before anything else.</p><div class="who">You</div></div></div>
+
+    <div class="need"><span class="n">2</span><div><b>One compensation position, not a menu</b><p>You are right that a list of options invites the cheapest one. The proposal should state a single structure and a single number, and the agreement should carry the same words. Part 2 asks the questions that settle what that number is. The structure I would argue for is a fixed project fee for the 90 days, paid in two halves (one at signing, one at the end, regardless of result), because it does not depend on payroll being able to run a special rate and it does not depend on anyone's discretion afterward.</p><div class="who">You decide, I draft</div></div></div>
+
+    <div class="need"><span class="n">3</span><div><b>The approval path, mapped</b><p>Who can say yes to paid hours, who can sign a payment to an associate outside payroll, who can sign an ownership acknowledgment. Almost certainly three different people: store manager, district or regional manager, and HR or legal. The proposal has to be aimed at the person who can sign the money, and the store manager's job becomes carrying it there. Until you know the path you cannot know who the audience is.</p><div class="who">You, by asking around</div></div></div>
+
+    <div class="need"><span class="n">4</span><div><b>A decision on the "no" path</b><p>What you will do if they decline: shelve it, take it to an independent grocer, or keep building. This decides how firm you can be. A person with a plan B negotiates differently, and it shows.</p><div class="who">You</div></div></div>
+
+    <div class="need"><span class="n">5</span><div><b>A written agreement, one to two pages, in plain English</b><p>Scope (what the pilot is and is not), term (90 days with a named start), payment (the single structure from item 2, with dates), data access (what, read-only, pilot only, deleted or returned at the end), ownership (the tool is yours, the results and the store's data are theirs), confidentiality both ways, what either side can stop and how, and what happens after (a separate conversation, no obligation either way). No lawyer needed to write it. If they route it through their legal team, that is fine and better than fine.</p><div class="who">I draft, you edit</div></div></div>
+
+    <div class="need"><span class="n">6</span><div><b>A measured baseline before you present</b><p>Two weeks of logging what you personally see thrown away, with the waste app, needs no permission. It turns the proposal's placeholder into "this store threw away roughly $X of prepared food last year on these items." A page with a real number on it is a different meeting.</p><div class="who">You, starting now</div></div></div>
+
+    <div class="need"><span class="n">7</span><div><b>The pilot items and the store</b><p>The ten highest-dollar prepared-food items, and the store with the biggest department if you have any say. Written down, with the price and the batch size you already know, so the item list in the proposal is real rather than "roughly ten."</p><div class="who">You</div></div></div>
+
+    <div class="need"><span class="n">8</span><div><b>A short, straightforward proposal</b><p>Five or six screens, not a document: the problem in one line, what exists, what the test showed, what the pilot is, what it costs, what they get. It replaces the current brief for the meeting itself. The current brief becomes the leave-behind. I can build it as slides or as a short HTML page; Part 2 asks which.</p><div class="who">I build, from your answers</div></div></div>
+
+    <div class="need"><span class="n">9</span><div><b>Something to show, not describe</b><p>A printed morning sheet from the rehearsal run and one screen of the results dashboard. Two minutes of "this is what the kitchen gets" beats ten minutes of explanation. The rehearsal already produces both.</p><div class="who">Me</div></div></div>
+
+    <div class="need"><span class="n">10</span><div><b>The data ask on one page, for whoever runs reports</b><p>The category manager or IT contact will not read a proposal. They need: which report, which columns, how far back, which store, and where to put the file. The repo's data contract already says this. It needs cutting to one page.</p><div class="who">Me</div></div></div>
+
+    <div class="need"><span class="n">11</span><div><b>The objections, answered in advance</b><p>The biggest one: the company already has forecasting and ordering systems. You need a clean answer for why prepared-food production is different (it is made in the store, not ordered, and the corporate system does not tell the kitchen how many trays to bake). Part 3 ends with a list of these with answers.</p><div class="who">Together</div></div></div>
+
+    <div class="need"><span class="n">12</span><div><b>Your own fluency</b><p>You need to be able to explain what the tool does, what it learns from, why it gives a range rather than a number, how it turns the range into a quantity, what the simulated store is, and what the simulation does and does not prove. Part 3 is written for that. Then a rehearsal where I ask you the questions and you answer without looking.</p><div class="who">You, with Part 3</div></div></div>
+
+    <div class="need"><span class="n">13</span><div><b>A line between what you show and what you keep</b><p>Decide in advance. My suggestion: you explain freely what it does and why it works, you show outputs, and you do not hand over code, the feature list, or the repository. "I'd rather not walk through the internals until we have terms" is a complete answer and a normal one.</p><div class="who">You</div></div></div>
+
+    <div class="need"><span class="n">14</span><div><b>A timeline with a decision date</b><p>When you present, when you need an answer, when the pilot would start, and the fact that the start depends on the sales history arriving. One line in the proposal, and it stops the thing sitting in a drawer.</p><div class="who">You set, I write</div></div></div>
+
+    <div class="need"><span class="n">15</span><div><b>The tool retrained on whatever they send, before you promise anything about accuracy</b><p>The current model is trained on the simulated store and cannot be used on real data as it is. Nothing in the proposal should imply otherwise. The first thing that happens after the sales file arrives is a fresh training run, and the shadow weeks exist so that nobody has to take accuracy on faith.</p><div class="who">Me, when the data lands</div></div></div>
+
+    <div class="need"><span class="n">16</span><div><b>The proposal file and the agreement in a form they can open</b><p>A PDF of each, plus the slides if we go that way. Nobody in a district office is opening an HTML file from a personal repository.</p><div class="who">Me</div></div></div>
+  </div>
+</section>
+
+<!-- ============================================================ PART 2 -->
+<section id="questions" class="part">
+  <h2>Part 2. Thirty-six questions for you</h2>
+  <p>Answer in any order and in as few words as you like. The ones marked "decides" change what gets written. Where I have an opinion I have put it under the question so you can just say yes or no.</p>
+
+  <h3>About your situation</h3>
+  <ol class="q">
+    <li>Did you sign anything at hiring about inventions, intellectual property, or work product? If you cannot find the paperwork, can you get a copy from HR without raising a flag?<small>Decides whether "the tool stays mine" is true.</small></li>
+    <li>Are you hourly or salaried, full time or part time, and roughly how many hours a week do you work now?<small>Decides whether 80 pilot hours fit inside your schedule or on top of it, and how payroll would treat them.</small></li>
+    <li>How long have you been at the company, and what is your relationship with your store manager like? Would they go to bat for you upstairs?<small>Decides whether the manager is the audience or the messenger.</small></li>
+    <li>Do you know your district or regional manager by name, and have they ever seen you present anything?</li>
+    <li>What do you want out of this in a year? A different job inside the company, a product you sell to other grocers, a line on a resume, or the money from this one pilot?<small>Decides how hard to push on ownership versus on pay.</small></li>
+    <li>If they say no, what will you do with the tool? Shelve it, take it to an independent grocer, or keep building?<small>Decides how firm the proposal can afford to be.</small></li>
+    <li>Is there anyone at the store or district who would be an ally: a department manager who hates the waste, an assistant manager who likes numbers?</li>
+  </ol>
+
+  <h3>About the money</h3>
+  <ol class="q" start="8">
+    <li>What is the one number you would sign for today, for the 90 days, regardless of result? Not the number you think they will pay. The number you would be satisfied with.<small>Decides the fee in the proposal and the agreement. My opinion: a flat fee between $2,500 and $4,000, half at signing and half at the end.</small></li>
+    <li>Would you rather have a smaller guaranteed fee and a share of measured savings, or a larger guaranteed fee and nothing tied to results?<small>My opinion: guaranteed fee only for the pilot. A savings share is the right structure for a rollout, not for a test.</small></li>
+    <li>If they counter with "we'll pay your normal rate for the hours and nothing more," do you walk, or do you take it for the proof point?<small>Decide this before the meeting, not in it.</small></li>
+    <li>Would you accept part of the value in something other than cash, such as a title change, a transfer to an analyst or operations role, or a commitment to a paid rollout if the gates pass?</li>
+    <li>Are you willing to set up a simple sole proprietorship or LLC so the company can pay a vendor invoice instead of running a special payroll rate? It is cheap and makes the payment mechanically easy for them.<small>Decides how the payment clause is written.</small></li>
+    <li>What would you charge per store for a rollout, if it came to that? Even a rough shape: a flat setup fee per store, a monthly fee, or a share of measured savings.<small>Not for the proposal. For you to know so that "what would a rollout cost" does not catch you cold.</small></li>
+  </ol>
+
+  <h3>About the store</h3>
+  <ol class="q" start="14">
+    <li>Which store, and roughly how big is its prepared-foods operation? How many people work the department, and who decides how much gets made each morning today?</li>
+    <li>Is there any written record today of how much is produced each day: a production sheet, a label printer log, a clipboard? If so, who fills it in and where does it live?<small>Decides whether the pilot can measure waste at all. This is the single most important factual question.</small></li>
+    <li>Is there any waste or shrink logging today, on paper or in a system? What happens to a tray that does not sell?</li>
+    <li>What are the ten highest-dollar prepared-food items at that store, as best you can tell? Which of them keep more than one day?</li>
+    <li>What are the batch sizes for those items? A tray of how many, a bake of how many, a pan of how many pounds?</li>
+    <li>What does the department do about holidays, weather, and paydays today? Gut feel, a corporate par, a manager's own notes?</li>
+    <li>Does the store run a corporate ordering or forecasting system for prepared foods, and if so, what does it actually tell the kitchen? An order quantity for ingredients, or a make quantity per item?<small>Decides the answer to the biggest objection.</small></li>
+    <li>Who would run the item movement report if asked: the store manager, a category manager, someone at district, or IT?</li>
+    <li>What time does the sales day close in the system, and do you know whether reports are on local time?</li>
+    <li>How often are prepared-food items on ad, and does the store know a week ahead?</li>
+    <li>Are there store closures or reduced-hours days other than the obvious holidays?</li>
+  </ol>
+
+  <h3>About the pitch</h3>
+  <ol class="q" start="25">
+    <li>Slides or a short page? A deck is easier to present from and easier to forward. A page is easier to read on a phone and harder to skim badly.<small>My opinion: slides for the meeting, the existing brief as the leave-behind.</small></li>
+    <li>Will you present in person, send it ahead, or both? If both, does the deck need to stand on its own without you talking?</li>
+    <li>Do you want the simulation numbers on the first screen, or the store's measured baseline once you have it? The measured number is smaller and far more persuasive.</li>
+    <li>How much of the "how" do you want in the room? My suggestion is one sentence ("it learns from your sales history, the calendar and the weather forecast, and prints a make-list") and no more unless asked.</li>
+    <li>Do you want your name and the words "built on my own time" on the first screen, or later? First screen sets the ownership frame before anyone asks.</li>
+    <li>Is there a company template, logo rule, or tone you should match, or does it read better as clearly yours?<small>My opinion: clearly yours, plain, no company branding. It is your property being offered.</small></li>
+    <li>When do you want to present, and by what date do you want an answer?</li>
+  </ol>
+
+  <h3>About the tool and the pilot</h3>
+  <ol class="q" start="32">
+    <li>Are you comfortable telling the manager the model was built and tested on invented data and has never seen a real store? It is true, it is in your favor legally, and it is the reason for the shadow weeks. But you should decide how to say it.</li>
+    <li>Who would key in the returned morning sheets each day during shadow mode: you, or someone in the department?<small>Decides the hours estimate.</small></li>
+    <li>Do you want the pilot to include the multi-day items (bread, cake) at all, given that the tool handles them honestly but not usefully yet? Leaving them out shrinks the dollar number but avoids a weak spot.</li>
+    <li>If the shadow weeks fail a gate, do you want the option to retrain and try one more four-week round, or is one round the deal?</li>
+    <li>What would make you personally call the pilot a success, separate from what the proposal says? A number, a reaction, a next conversation?</li>
+  </ol>
+</section>
+
+<!-- ============================================================ PART 3 -->
+<section id="how" class="part">
+  <h2>Part 3. How it works, in the words you would use</h2>
+  <p>This is the whole system, in the order the data moves through it. Read it twice. Then have me quiz you.</p>
+
+  <h3>The one-sentence version</h3>
+  <div class="box">Every morning the tool looks at what each item sold over the last four weeks, what tomorrow is (weekday, season, holiday, payday, weather forecast), predicts a range for tomorrow's demand, and turns that range into a make quantity using the item's price and cost, so cheap high-margin items get padded and expensive low-margin items run lean.</div>
+
+  <h3>The six pieces</h3>
+  <div class="flow">
+    <div><b>1. Intake</b>Reads the store's sales export, cleans it, and refuses anything it cannot explain.</div>
+    <div><b>2. Features</b>Turns each item-day into the numbers the model reads: recent history plus tomorrow's known facts.</div>
+    <div><b>3. Demand model</b>One small neural network for all items. Outputs a range, not a number.</div>
+    <div><b>4. Decision rule</b>Picks the quantity from the range using price and cost. Rounds to a batch.</div>
+    <div><b>5. Morning sheet</b>Prints MAKE per item beside the store's own par, with a plain-language WHY.</div>
+    <div><b>6. Scoring</b>Records every prediction before the day happens, then grades it against real sales.</div>
+  </div>
+
+  <h3>1. Intake</h3>
+  <p>A store's sales export is messy in predictable ways: a report title above the header, a totals row below it, two-digit years, refunds printed in parentheses, a different barcode on every package of a weighed item, an item that changed number halfway through the history, days simply missing because nothing sold. The intake step reads that file through a mapping you write once (which column is the date, which is the item number, what date format, which item numbers are which products) and produces one clean table: one row per item per day, with units sold, units produced if known, and a sellout flag.</p>
+  <p>Its rule is that it never guesses. Every repair it makes has to be authorized by a named line in the mapping, and if something in the file is not covered, it stops and says which line would cover it. The reason is that a wrong guess produces a clean-looking table that trains the model on a typo, and nothing downstream would ever notice. A validation step then checks the table for gaps, items with too little history, closed days that look like demand collapses, and anything else that would quietly poison a forecast.</p>
+
+  <h3>2. Features</h3>
+  <p>For each item on each day the model is handed two things.</p>
+  <p>The first is the item's own last 28 days: how much sold each day (scaled so a doughnut and a cake are comparable), whether it sold out, whether the store was closed, the day's high temperature, and whether it rained or snowed. Six numbers per day, 28 days.</p>
+  <p>The second is what is known about tomorrow before it happens: which weekday, where in the year it falls, whether it is one of fourteen named holidays, how many days until the next holiday, the forecast high, the forecast weather kind, whether snow is forecast for the day after, whether it is a payday, and a slow trend term. About 35 numbers.</p>
+  <p>Every one of these is something a real store can see the evening before. Nothing from the future, and nothing from the simulator's hidden columns, is ever an input. That matters because it is the difference between a forecast and a cheat.</p>
+
+  <h3>3. The demand model</h3>
+  <p>One model serves every item. It has three parts. A small recurrent network reads the 28-day history and summarizes it. A learned "identity" for each item tells the model which product it is looking at, so the same network can know that doughnuts spike on weekends and hot bar spikes on cold days. And a small set of layers combines that summary, the item identity, and tomorrow's facts into the output.</p>
+  <p>The output is not one number. It is eleven numbers: the demand level the model thinks has a 5 percent chance of being exceeded, a 10 percent chance, 20, 30, 50, 70, 80, 90, 95, 97.5 and 99. Together they describe a range. The model is built so those eleven numbers can never cross, which is what makes them a range rather than a list.</p>
+  <p>It is trained to make each of those numbers honest: the 90 percent line should sit above actual demand about nine days in ten. There is one wrinkle that matters a great deal. On a day the case sold out, the sales figure is not demand, it is a floor on demand, because more would have sold. The training rule knows this: on sellout days the model is only penalized for predicting too low, never for predicting too high. Without that, a model learns that busy days are smaller than they are, and recommends too little on exactly the days that matter.</p>
+  <p>Sizes, in case you are asked: the model is small. It trains in about a minute on an ordinary laptop with three years of data for nine items. It needs no special hardware to run and produces a morning sheet in seconds.</p>
+
+  <h3>4. The decision rule</h3>
+  <p>A forecast is not a make quantity. The tool converts one into the other with a rule that is a century old and is the standard answer for perishables. For each item, the cost of making one unit too many is what that unit cost to make. The cost of making one too few is the margin you did not earn. The right quantity is the point in the demand range where those two risks balance. The formula is margin divided by price:</p>
+  <div class="tw"><table>
+    <tr><th>Item</th><th class="num">Price</th><th class="num">Cost</th><th class="num">Margin ÷ price</th><th>What it means</th></tr>
+    <tr><td>Doughnut</td><td class="num">$1.19</td><td class="num">$0.25</td><td class="num">0.79</td><td>Make enough to cover demand on 79 days in 100. Cheap to over-make, so pad it.</td></tr>
+    <tr><td>Pizza slice</td><td class="num">$3.49</td><td class="num">$0.90</td><td class="num">0.74</td><td>Similar. High margin, pad generously.</td></tr>
+    <tr><td>Bread loaf</td><td class="num">$3.99</td><td class="num">$1.10</td><td class="num">0.72</td><td></td></tr>
+    <tr><td>Rotisserie chicken</td><td class="num">$7.99</td><td class="num">$3.20</td><td class="num">0.60</td><td>Expensive to waste. Run closer to the middle of the range.</td></tr>
+    <tr><td>Sushi roll</td><td class="num">$8.99</td><td class="num">$3.80</td><td class="num">0.58</td><td>Leanest of the nine.</td></tr>
+  </table></div>
+  <p>The tool reads that percentile off the eleven-number range and rounds up to the item's batch size, never below one batch. This is why a good forecast alone is not enough and why the item price and cost are on the list of things the store has to supply: a wrong cost gives a wrong quantity even with a perfect forecast.</p>
+
+  <h3>5. The morning sheet</h3>
+  <p>One printed page, 80 characters wide so a receipt printer can produce it. For each item: the MAKE quantity, the batch size, the store's own four-week same-weekday par beside it for comparison, and a WHY column that only ever states calendar and weather facts ("Fri; rain; payday"), never the model's reasoning, because a fact can be checked against a window and a wrong explanation destroys trust faster than a wrong number. Items that keep for several days are listed separately as a check-what's-left reminder rather than an order.</p>
+
+  <h3>6. Scoring, and the five gates</h3>
+  <p>Every prediction is written to a log before the sheet is printed, stamped with the time and how far the data ran. Nothing is ever re-forecast after the fact. The next day the real sales are joined to that log and the day is scored once. If the store later corrects a sales figure, the correction is recorded separately and the original score stands. This is what makes the four-week report a proof rather than a story.</p>
+  <p>Five pass/fail checks print on every weekly report from week one, so nobody can move the target later:</p>
+  <dl>
+    <dt>G1 Data complete</dt><dd>At least 95 percent of item-days scored, with no unexplained gap longer than a day.</dd>
+    <dt>G2 Beats the par</dt><dd>The model's error is at most 90 percent of the par sheet's error over the four weeks, and it beats the par in at least three of the four.</dd>
+    <dt>G3 Honest ranges</dt><dd>The middle line sits above actual demand about half the time, and the 90 percent line at least three quarters of the time.</dd>
+    <dt>G4 Worth doing</dt><dd>The provable waste saving is at least 15 percent of measured waste, with sellouts up by no more than three points.</dd>
+    <dt>G5 Covers the money</dt><dd>No more than two of the ten highest-dollar items were dropped for lack of history.</dd>
+  </dl>
+  <p>"Pending" is not "pass." A gate that cannot be measured, for instance because the store has no production count and so no waste figure, reads pending, and the pilot does not go live on a pending gate.</p>
+
+  <h3>Accuracy, and what the benchmarks are</h3>
+  <p>The accuracy number is weighted absolute percentage error, which you can explain as "on average, how far off in units, as a share of what actually sold." Lower is better. The model is always run alongside two simpler forecasters so it has to earn its place: a trailing average of the last four same weekdays (the par sheet's own brain), and a straightforward linear model that sees the same calendar and weather facts. On the simulated year the network scored 13.0 percent, the trailing average 15.5, the linear model 15.1.</p>
+</section>
+
+<!-- ============================================================ SIM -->
+<section id="sim" class="part">
+  <h2>The simulated store</h2>
+  <p>You built and tested the model on an invented store, and you should say so plainly and early. The reason is legal and practical: it meant no company data was needed to settle whether the method works, and it means the tool arrives at the store with no history of touching anything it should not have.</p>
+
+  <h3>What it is</h3>
+  <p>Three years of daily records, January 2023 through December 2025, for nine prepared-food items at one mid-size store: whole pizza, pizza slice, doughnut, cake, bread loaf, rotisserie chicken, hot bar by the pound, sushi roll, and sub sandwich. One row per item per day, just under ten thousand rows. Every number in it is generated from a set of rules with a fixed random seed, so the same file can be regenerated byte for byte.</p>
+
+  <h3>How demand is generated</h3>
+  <p>Each item has a base daily rate, and a stack of multipliers turns that into a given day's expected demand:</p>
+  <ul>
+    <li>A weekday shape per item. Doughnuts run 40 percent above their base on Saturday and 20 percent below on Tuesday. Hot bar is a weekday item. Whole pizza peaks Friday.</li>
+    <li>A yearly season per item. Hot bar is a winter item, sushi and subs peak in summer, bread and doughnuts peak around the holidays.</li>
+    <li>Fourteen named holidays, each with its own per-item effect. Super Bowl Sunday triples whole pizza and nearly doubles slices and subs. Mother's Day is two and a half times normal for cake. The day before Thanksgiving more than doubles bread. Thanksgiving itself runs at 45 percent for everything. Christmas is closed.</li>
+    <li>Weather. Rain takes 10 percent off traffic, snow takes 45 percent off, and the day before a forecast snow adds 25 percent to everything and 150 percent to bread. Hot bar and rotisserie sell more on cold days, sushi and subs on warm ones.</li>
+    <li>Paydays, the 1st to 3rd and 15th to 17th of the month, add 5 percent.</li>
+    <li>A slow traffic trend of 2 percent a year, and sushi growing 12 percent a year as a category.</li>
+    <li>A graduation-season window in May and June for cake.</li>
+    <li>Noise, on purpose. Every day has a store-wide random factor so items move together, each item has its own random factor, and about one day in a hundred is an unpredictable local event that adds 35 percent. No model can learn these, and the point is that no model should be able to.</li>
+  </ul>
+
+  <h3>How the simulated manager decides</h3>
+  <p>This is the part to be ready to defend, because the first sharp question is "so you beat a dumb baseline." The status-quo manager is not dumb. Each morning it averages the last four same-weekday sales, adds 6 percent for every recent sellout because it knows sales undercount demand on sold-out days, and pads by 15 percent. If yesterday sold out it bumps 10 percent. If yesterday threw away more than 30 percent it trims 6 percent. It knows holidays are coming and adjusts in the right direction, just imprecisely. It bakes extra bread before snow and cuts back on snow days and rainy mornings. Over the test year it wasted 18.8 percent of production while keeping the shelves 98 percent stocked, which is a competent operator, not a straw man. What it lacks is precision: it lags trends and seasons by weeks, it guesses holidays coarsely, and it cannot see weather beyond a rule of thumb.</p>
+
+  <h3>What the simulation can see that a real store cannot</h3>
+  <p>The generator knows the true demand every day, including the sales that never happened because the case was empty. Those columns exist only to grade the policies afterward. The model never sees them during training and the real-data version of the code cannot read them at all. If asked "how do you know what would have sold," the honest answer is: in the simulation, because the simulation defines it. In a real store, nobody knows, which is why the real-data scoring reports measured waste exactly and reports lost sales only as a provable lower bound.</p>
+
+  <h3>The replay</h3>
+  <p>The model trained on 2023 and 2024 and was then run against 2025 as if live, one day at a time, recommending a quantity for every item on every open day. The simulation's true demand settled what sold, what was wasted, and what was missed. The same year was replayed under the status-quo manager, the two benchmark forecasters, the model at its profit-optimal setting, the model pinned to the manager's own availability level, and an oracle that knows the true demand distribution and marks the best any method could do.</p>
+  <div class="tw"><table>
+    <tr><th>Policy</th><th class="num">Waste (retail)</th><th class="num">Waste, % of production</th><th class="num">Shelf availability</th><th class="num">Total cost of being wrong</th></tr>
+    <tr><td>Status quo, par sheet</td><td class="num">$138,462</td><td class="num">18.8%</td><td class="num">98.1%</td><td class="num">$56,011</td></tr>
+    <tr><td>Trailing average + rule</td><td class="num">$67,278</td><td class="num">10.5%</td><td class="num">94.6%</td><td class="num">$48,026</td></tr>
+    <tr><td>Linear model + rule</td><td class="num">$43,617</td><td class="num">7.2%</td><td class="num">92.8%</td><td class="num">$47,617</td></tr>
+    <tr><td>Model, availability held at 98%</td><td class="num">$87,351</td><td class="num">12.8%</td><td class="num">97.6%</td><td class="num">$41,078</td></tr>
+    <tr><td>Model, profit-optimal</td><td class="num">$55,883</td><td class="num">8.8%</td><td class="num">95.5%</td><td class="num">$39,723</td></tr>
+    <tr><td>Oracle, perfect knowledge</td><td class="num">$57,435</td><td class="num">8.9%</td><td class="num">96.6%</td><td class="num">$35,788</td></tr>
+  </table></div>
+  <p>"Total cost of being wrong" is wasted units at cost plus missed sales at lost margin. It is the number that matters, because waste alone can be driven to zero by making nothing. The two benchmarks cut waste but do it by leaving the shelves emptier and end up barely better than the par sheet on total cost. The model closes 81 percent of the gap between the par sheet and perfect knowledge. Nothing closes all of it, because some demand is noise by construction.</p>
+
+  <h3>What it proves and what it does not</h3>
+  <p>It proves the method: demand with weekday, season, holiday and weather structure can be learned from sales alone, even with sellouts hiding the busy days, and production driven by that forecast beats a competent par sheet by a wide margin on both waste and total cost. It does not prove this store's number. The simulated store is a plausible invention with parameters someone guessed at, its manager is an invention, and its weather forecast is perfect where a real one is not. That is why the pilot promises 10 to 15 percent, why the store's own measured baseline is the yardstick, and why four shadow weeks come before anything changes in the kitchen.</p>
+
+  <h3>The known limits, in your own words</h3>
+  <ul>
+    <li>Items that keep more than a day, like bread and cake, are served from a mix of today's and yesterday's stock. The tool's rule assumes each day starts from zero, so for those items it prints a reminder rather than a quantity. A proper fix is a separate piece of work.</li>
+    <li>Ads and markdowns are not modeled. An ad week looks like noise to the model and makes that item's range wider. If the store has a heavy ad cadence, that will be the main source of error.</li>
+    <li>If the store has no record of daily production, the tool cannot tell a sellout from a slow day, quantities run somewhat low on the busiest days, and there is no waste figure to measure savings against. It still runs and says so on every page.</li>
+    <li>The rehearsal on a mock export was written by the same person who wrote the intake step, so the first real file will break something nobody anticipated. That is a week of cleanup, not a failure, and it is budgeted.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ Q&A -->
+<section id="qa" class="part">
+  <h2>Likely questions and answers</h2>
+  <p>Say these in your own words. The ones marked with a line are where you stop and do not go further.</p>
+  <div class="qa">
+    <div><b>We already have a forecasting system. Why do we need this?</b><p>The corporate system orders ingredients and packaged goods into the store. It does not tell the kitchen how many trays to bake at five in the morning. That decision is made on a par sheet or by feel, and that is the decision this changes. It does not replace anything you have.</p></div>
+    <div><b>How does it actually work?</b><p>It learns from two or three years of the store's own daily sales what each item does by weekday, by season, around holidays and in different weather. Each morning it takes tomorrow's calendar and weather forecast and predicts a range for each item, then picks the quantity in that range where the cost of one wasted unit balances the cost of one missed sale. It prints that as a make-list.</p></div>
+    <div><b>What kind of model is it? A neural network? AI?</b><p>A small neural network of the kind used in retail demand forecasting, plus a standard inventory rule. It runs on a laptop in seconds. The line: "I'm happy to go deeper on the internals once we have terms. For now, what matters is that it only uses what the store can already see and it is graded against real sales before anything changes."</p></div>
+    <div><b>You tested it on made-up data?</b><p>Yes, on purpose. I built a realistic simulated store so I could prove the method without touching company data or needing permission I did not have. The simulation shows the approach works. Whether it works here is exactly what the four shadow weeks measure, before the kitchen changes anything.</p></div>
+    <div><b>So it beat a dumb baseline.</b><p>No. The simulated manager uses a four-week same-weekday average with a safety pad, reacts to sellouts and heavy waste, adjusts for holidays and snow. It wasted about 19 percent while keeping shelves 98 percent full, which is a good operator. The model beat it by a wide margin on waste and on total cost, and the two simpler forecasters I ran alongside did not.</p></div>
+    <div><b>What if it tells us to make too little and we run out?</b><p>The pilot runs at the setting that keeps availability where it is today. Sellouts are counted every day. Any item can go back to its par the same morning, and the manager can override any line on the sheet. Overrides are logged, not fought.</p></div>
+    <div><b>What data do you need and is it sensitive?</b><p>Daily units sold per item for about ten items, going back two years. No customers, no transactions, no employees, no card data. It is the item movement report the store already runs. Plus a daily count of what we put out, which can be a clipboard photo.</p></div>
+    <div><b>Why two years?</b><p>There is one Thanksgiving a year. To learn what a holiday does, the model needs to have seen it more than once.</p></div>
+    <div><b>Why should we pay you? You work here.</b><p>Because the tool is not something I did at work. I built it on my own time, it has never touched company data, and I am offering to run a paid test of it here rather than somewhere else. The hours are real work and the tool is real property. The fee is a fraction of what an outside vendor would charge for a pilot, and if the gates fail you have lost very little.</p></div>
+    <div><b>Who owns it?</b><p>I do. The store owns its data and the pilot results. If it works and the company wants to use it beyond the pilot, that is a separate conversation. The line: do not negotiate the rollout in the pilot meeting.</p></div>
+    <div><b>What does it cost us if it does not work?</b><p>The fee, some report runs, and a few hours of the department's time logging waste and photographing a clipboard. Nothing in the kitchen changes unless the four-week checks pass.</p></div>
+    <div><b>How do we know the numbers afterward are honest?</b><p>Every prediction is written down before the day happens and never changed. Scores are frozen when the day's sales arrive. The five pass/fail checks are printed on the first weekly report, so the target cannot move later.</p></div>
+    <div><b>Can we see the code?</b><p>The line: "Not before we have terms. I'll show you every output, the morning sheet, the weekly report, the accuracy numbers. The internals are what I'm bringing to the table."</p></div>
+  </div>
+
+  <h3>Glossary, for your own reference</h3>
+  <dl>
+    <dt>Par sheet</dt><dd>The fixed make quantity per item the kitchen works from today.</dd>
+    <dt>Item movement</dt><dd>The store report of units sold per item per day. The training data.</dd>
+    <dt>Sellout / stockout</dt><dd>The case ran empty. Sales that day are a floor on demand, not demand.</dd>
+    <dt>Censoring</dt><dd>The technical word for the sellout problem. The model is trained to treat sold-out days as "at least this much."</dd>
+    <dt>Quantile</dt><dd>One line in the demand range. The 90 percent quantile is the level demand stays under nine days in ten.</dd>
+    <dt>Newsvendor rule</dt><dd>The inventory rule that picks the quantity where the cost of one too many balances the cost of one too few. Margin divided by price gives the percentile.</dd>
+    <dt>Critical fractile</dt><dd>The newsvendor rule's percentile. Doughnut 0.79, rotisserie 0.60.</dd>
+    <dt>Batch</dt><dd>The unit production is rounded to. A tray of twelve doughnuts, a bake of four chickens.</dd>
+    <dt>WAPE</dt><dd>Weighted absolute percentage error. Total units off divided by total units sold. Lower is better.</dd>
+    <dt>Shadow mode</dt><dd>The tool prints its sheet, the kitchen ignores it, and the predictions are scored against real sales.</dd>
+    <dt>Baseline</dt><dd>The store's measured waste before anything changes. The yardstick.</dd>
+    <dt>Oracle</dt><dd>A policy that knows the true demand distribution. Exists only in the simulation, as a ceiling.</dd>
+    <dt>Fill rate / availability</dt><dd>Share of demand actually served. 98 percent means two units in a hundred were wanted and not there.</dd>
+  </dl>
+</section>
+
+</div>
