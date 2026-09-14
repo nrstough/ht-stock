@@ -111,6 +111,17 @@ Published artifacts (same content as the files):
   and chicken, and the heavy items are barcoded, which means the store's own records can
   supply most of the baseline. The unbarcoded lump (donuts, pizza, leftover sub bread)
   matters less than first assumed.
+- Recording completeness, from Nathan on 2026-09-14, and it is the biggest open risk in the
+  pilot: the scan-out records are not as complete as "barcoded" suggests. Donuts do not
+  always get tagged when thrown. Pizza does get thrown but usually is not scanned out.
+  Sushi sometimes gets dumped. Nothing else on the hot bar goes to waste; it sells through.
+  Most scanning out is done by a manager or on shifts Nathan does not work, so he cannot
+  personally vouch for anything beyond the chicken items he named. Consequence: measured
+  waste from company records is a floor, not a total, and it is a floor of unknown
+  tightness. If the pilot cuts unscanned waste, the records will not show it. The two-week
+  measure phase has to test recording completeness, not just produce a dollar figure, and
+  the data-quality gate should include a completeness check on the pilot items. This needs
+  to be said out loud to the manager rather than discovered in week eight.
 - Nathan asked Claude to log into his HR portal through his browser. Not possible from this
   session and not appropriate in any case. He pulls the packet himself.
 - HR portal: Nathan asked Claude to check it from his computer. Not possible from a cloud
