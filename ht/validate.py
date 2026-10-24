@@ -23,6 +23,8 @@ import sys
 import numpy as np
 import pandas as pd
 
+from model import features as _features
+
 from . import calendar as ht_calendar
 from . import config as ht_config
 from . import schema
@@ -32,26 +34,13 @@ Finding = collections.namedtuple("Finding", "level check item message count")
 
 LEVELS = ("error", "warning", "info")
 
-# model/features.py is being parameterized in parallel; read its constants when they are there
-# and fall back to the frozen specification's numbers when they are not, so this module is
-# runnable on its own. The two must not drift -- tests/test_features_real.py pins them.
-try:                                                    # pragma: no cover - import shim
-    from model import features as _features
-except Exception:                                       # pragma: no cover
-    _features = None
-
-
-def _const(name, default):
-    return getattr(_features, name, default) if _features is not None else default
-
-
-CONTEXT_DAYS = _const("CONTEXT_DAYS", 28)
-MIN_PANEL_DAYS = _const("MIN_PANEL_DAYS", 126)
-MIN_PANEL_DAYS_NO_TEST = _const("MIN_PANEL_DAYS_NO_TEST", 98)
-MIN_PANEL_DAYS_SHORT = _const("MIN_PANEL_DAYS_SHORT", 70)
-MIN_ITEM_TRAIN_DAYS = _const("MIN_ITEM_TRAIN_DAYS", 84)
-MIN_TRAIN_DAYS = _const("MIN_TRAIN_DAYS", 84)
-MIN_TRAIN_DAYS_SHORT = _const("MIN_TRAIN_DAYS_SHORT", 56)
+# The history floors and the split arithmetic are model/features.py's, imported rather than
+# copied, so the gate cannot pass a panel that training then refuses. An import failure or a
+# renamed constant fails here, loudly, instead of falling back to numbers that may have
+# drifted. tests/test_features_real.py pins these names to features'.
+CONTEXT_DAYS = _features.CONTEXT_DAYS
+MIN_ITEM_TRAIN_DAYS = _features.MIN_ITEM_TRAIN_DAYS
+MIN_TRAIN_DAYS_SHORT = _features.MIN_TRAIN_DAYS_SHORT
 
 SELLOUT_RATE_LOW = 0.03
 SELLOUT_RATE_HIGH = 0.60
@@ -75,33 +64,10 @@ def _split_preview(panel, split_opts=None):
     if not len(open_rows):
         return dict(span_days=0, error="no open rows")
     dates = open_rows["date"]
-    if _features is not None and hasattr(_features, "resolve_splits"):
-        try:
-            return dict(_features.resolve_splits(dates.to_numpy(), **opts))
-        except TypeError:                               # an older features without the knobs
-            return dict(_features.resolve_splits(dates.to_numpy()))
-        except Exception as exc:                        # a real InsufficientHistory, reported
-            return dict(span_days=int((dates.max() - dates.min()).days) + 1, error=str(exc))
-    span = int((dates.max() - dates.min()).days) + 1
-    no_test, short = bool(opts.get("no_test")), bool(opts.get("allow_short"))
-    test_days = 0 if (no_test or short) else int(min(max(round(0.20 * span), 28), 365))
-    val_days = 14 if short else int(min(max(round(0.10 * span), 14), 84))
-    train_days = span - test_days - val_days
-    test_start = dates.max() - pd.Timedelta(days=test_days - 1)
-    val_start = test_start - pd.Timedelta(days=val_days)
-    out = dict(span_days=span, test_days=test_days, val_days=val_days, train_days=train_days,
-               train_end=str((val_start - pd.Timedelta(days=1)).date()),
-               val_start=str(val_start.date()), test_start=str(test_start.date()),
-               thin=False, source="ht.validate fallback")
-    floor = MIN_TRAIN_DAYS_SHORT if short else MIN_TRAIN_DAYS
-    if train_days < floor:
-        out["error"] = (f"panel covers {span} days ({dates.min().date()}..{dates.max().date()}); "
-                        f"a train/val/test split needs {MIN_PANEL_DAYS} days "
-                        f"({CONTEXT_DAYS} context + {MIN_TRAIN_DAYS - CONTEXT_DAYS} train targets "
-                        f"+ 14 val + 28 test). Ask the store for 104 weeks of item movement, or "
-                        f"pass --no-test (needs {MIN_PANEL_DAYS_NO_TEST}) or --allow-short "
-                        f"(needs {MIN_PANEL_DAYS_SHORT})")
-    return out
+    try:
+        return dict(_features.resolve_splits(dates.to_numpy(), **opts))
+    except _features.InsufficientHistory as exc:        # reported, not raised
+        return dict(span_days=int((dates.max() - dates.min()).days) + 1, error=str(exc))
 
 
 def _runs(mask, dates):

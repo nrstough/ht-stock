@@ -254,3 +254,11 @@ def test_allow_short_can_actually_succeed_at_the_floor_it_advertises(make_panel)
     panel = make_panel(["bread"], days=70)
     b = features.build(panel, spec=features.spec_for_panel(panel, allow_short=True))
     assert b["items"] == ["bread"] and len(b["y"]) > 0
+
+
+def test_the_validator_gates_on_the_floors_training_applies():
+    """ht.validate decides whether a panel is fit to train on; if its history floors were a
+    copy that drifted from these, it would pass a panel training then refuses, or the reverse."""
+    from ht import validate
+    for name in ("CONTEXT_DAYS", "MIN_ITEM_TRAIN_DAYS", "MIN_TRAIN_DAYS_SHORT"):
+        assert getattr(validate, name) == getattr(features, name), name
