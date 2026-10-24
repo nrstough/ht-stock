@@ -2,3 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 .rehearsal/
+# Real-store outputs. The commands in README.md and docs/REAL_DATA_READINESS.md write these
+# into the working tree, and they hold a store's own sales, sell-out times and staff initials.
+# The frozen PoC files (data/store_synth.csv, model/artifacts/) stay tracked.
+panel*.csv
+ingest*.json
+shadow/
+/artifacts/
+/art/
