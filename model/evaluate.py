@@ -85,11 +85,6 @@ def to_units(zmat, b):
     return np.expm1(zmat * std + mean).clip(min=0)
 
 
-def predict(b, artifacts_dir, batch_size=1024):
-    """The (n, n_taus) quantile matrix in UNITS. Raises SpecMismatch on a stale checkpoint."""
-    return to_units(_predict_z(b, artifacts_dir, batch_size), b)
-
-
 def model_version(artifacts_dir):
     with open(os.path.join(artifacts_dir, "demandnet.pt"), "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()[:12]

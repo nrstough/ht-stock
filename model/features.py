@@ -708,12 +708,6 @@ def _assert_occupancy(out, spec):
         )
 
 
-def inverse_transform(z, item, stats):
-    """z-scored log1p sales -> units."""
-    st = stats["items"][item]
-    return np.expm1(z * st["std"] + st["mean"])
-
-
 def assert_compatible(meta, b):
     """Refuse to score a checkpoint against features it was not trained on."""
     if "spec" not in meta:

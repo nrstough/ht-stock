@@ -270,10 +270,6 @@ def aggregate(df, policy="sum", key=None):
     return out.reset_index()
 
 
-def _spans(df):
-    return df.groupby(["store", "item"])["date"].agg(["min", "max"])
-
-
 def reindex_grid(df, items, mapping):
     """Put every item on a complete daily index across its own carried span.
 
