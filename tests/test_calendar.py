@@ -46,6 +46,7 @@ def test_easter_is_always_a_sunday_in_march_or_april():
 
 
 @pytest.mark.parametrize("year,expected", [
+    (2003, "2003-01-26"),    # XXXVII, back in January for one season: an override, not a rule
     (2019, "2019-02-03"),    # LIII, first Sunday -- the 16-game era
     (2021, "2021-02-07"),    # LV, still first Sunday
     (2022, "2022-02-13"),    # LVI, the first 17-game season: second Sunday from here on

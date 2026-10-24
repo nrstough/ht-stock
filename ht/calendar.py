@@ -46,10 +46,12 @@ PRECEDENCE = HOLIDAY_NAMES
 
 # The 2nd-Sunday rule starts with Super Bowl LVI; the 1st-Sunday rule below it holds back
 # to 2002, when the game first moved into February. Anything earlier was played in January
-# on no rule this file can express, so it belongs in the table.
+# on no rule this file can express, so it belongs in the table -- and so does 2003, the one
+# season after the move that went back to January (Jan 26, not the rule's Feb 2).
 SUPER_BOWL_SECOND_SUNDAY_FROM = 2022
 SUPER_BOWL_FIRST_SUNDAY_FROM = 2002
 SUPER_BOWL_OVERRIDES = {
+    2003: dt.date(2003, 1, 26),
     2018: dt.date(2018, 2, 4), 2019: dt.date(2019, 2, 3), 2020: dt.date(2020, 2, 2),
     2021: dt.date(2021, 2, 7),
 }
@@ -104,7 +106,7 @@ def easter(year):
 
 
 def super_bowl(year):
-    """Super Bowl Sunday. Second Sunday of February from 2022, first Sunday 2002-2021.
+    """Super Bowl Sunday. Second Sunday of February from 2022, first Sunday 2002-2021 bar 2003.
 
     Years listed in SUPER_BOWL_OVERRIDES win outright. Before 2002 the game was played in
     January on no rule, so the first-Sunday answer returned there is wrong; add the year to
