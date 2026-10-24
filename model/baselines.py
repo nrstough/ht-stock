@@ -68,7 +68,11 @@ def _lag_features(df, stats):
 
 
 def naive_forecast(df, b):
-    """Trailing 4 same-weekday sales mean, in units, aligned with b's rows."""
+    """Trailing 4 same-weekday sales mean, in units, aligned with b's rows.
+
+    With no same-weekday history yet it falls back to the previous day's sales, and on an
+    item's first row, which has no history at all, to NaN -- never to the target itself.
+    """
     key = pd.MultiIndex.from_arrays([b["item"], b["date"]])
     trail = {}
     for item, grp in df.groupby("item"):
@@ -76,7 +80,10 @@ def naive_forecast(df, b):
         dates = grp.date.values
         for t in range(len(grp)):
             past = [z[t - 7 * k] for k in range(1, 5) if t - 7 * k >= 0]
-            trail[(item, dates[t])] = float(np.mean(past)) if past else float(z[max(t - 1, 0)])
+            if past:
+                trail[(item, dates[t])] = float(np.mean(past))
+            else:
+                trail[(item, dates[t])] = float(z[t - 1]) if t else float("nan")
     return np.array([trail[k] for k in key])
 
 
