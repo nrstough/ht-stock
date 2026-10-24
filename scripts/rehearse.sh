@@ -17,7 +17,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-PY="${PY:-$ROOT/.venv/bin/python}"     # never bare python3: it has none of the dependencies
+# $PY wins; then the repo's .venv, which is where a local checkout installs the dependencies;
+# then python3 on PATH, which is the interpreter CI's setup-python step installed them into.
+if [ -z "${PY:-}" ]; then
+  if [ -x "$ROOT/.venv/bin/python" ]; then
+    PY="$ROOT/.venv/bin/python"
+  else
+    PY="$(command -v python3)" || { echo "no .venv/bin/python and no python3 on PATH" >&2; exit 2; }
+  fi
+fi
 REH="$ROOT/.rehearsal"
 ITEMS="config/items.example.json"
 
