@@ -10,3 +10,4 @@ ingest*.json
 shadow/
 /artifacts/
 /art/
+/eval*.json
